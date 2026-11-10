@@ -1,0 +1,22 @@
+#!/bin/bash
+# dbctl start|stop|restart|status  for redis-server (config: /etc/redis/redis.conf)
+PID=/var/run/redis/redis.pid; LOG=/var/log/redis/redis.log
+alive() { [ -s $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
+start() {
+  alive && { echo "redis is already running"; return 0; }
+  out=$(redis-server /etc/redis/redis.conf 2>&1)
+  for i in $(seq 60); do
+    redis-cli ping 2>/dev/null | grep -q PONG && { echo "redis started"; return 0; }
+    [ $i -gt 4 ] && ! alive && break; sleep 0.5
+  done
+  echo "redis failed to start:"; [ -n "$out" ] && echo "$out" | tail -5; tail -n 5 $LOG 2>/dev/null; echo "(log: $LOG)"; return 1
+}
+stop() {
+  alive || { echo "redis is not running"; return 0; }
+  kill "$(cat $PID)"; for i in $(seq 120); do alive || { echo "redis stopped"; return 0; }; sleep 0.5; done; return 1
+}
+case $1 in
+  start) start ;; stop) stop ;; restart) stop; start ;;
+  status) alive && echo "redis is running (pid $(cat $PID))" || { echo "redis is not running"; exit 3; } ;;
+  *) echo "usage: dbctl start|stop|restart|status" ;;
+esac

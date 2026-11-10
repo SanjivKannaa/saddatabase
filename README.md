@@ -1,49 +1,84 @@
 # sadDatabase
 
-Broken databases, real shells. A SadServers-style trainer for DBA skills: pick a scenario, get a
-terminal in the browser on a disposable box with a broken PostgreSQL, fix it, press **Check**.
+Broken databases, real shells. A SadServers-style trainer for DBA skills: pick a track, get a
+terminal in the browser on a disposable box with a broken database, fix it, press **Check**.
 
-## Run (lab box)
-```
-bin/sadb build                     # build base + all scenario images (~1-2 min)
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8090
-```
-Open http://127.0.0.1:8090/ (or tunnel it: `ssh -L 8090:127.0.0.1:8090 magickite`).
+**Tracks:** PostgreSQL 17 (7 scenarios), MySQL 8.4 (4), MongoDB 7.0 (4), Redis 8 (3).
+Sign in with Google; progress, attempts, checks, hints and solution peeks are stored per user, with a
+profile page and a leaderboard (clean solves first).
 
-Env: `SADDB_SESSION_MINUTES` (default 45), `SADDB_MAX_SESSIONS` (default 4).
+## Run
+```
+bin/sadb build                     # engine bases + all scenario images (~5 min the first time)
+cp .env.example .env && chmod 600 .env   # then fill it in
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1
+```
+On magickite it's published as https://sad.db.magickite by `sudo deploy/install-magickite.sh`
+(nginx vhost, cert SAN, Google callback route, systemd user unit).
+
+### Settings (`.env`, environment wins)
+| var | meaning |
+|---|---|
+| `SADDB_PUBLIC_URL` | where users reach the site, e.g. `https://sad.db.magickite` |
+| `SADDB_OAUTH_REDIRECT_URL` | Google callback. Google only accepts public suffixes or `localhost`, so on the lab box it is `https://magickite.tail835779.ts.net/sad-auth/callback`, proxied to `/auth/callback` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth web client; the redirect URL above must be registered on it |
+| `SADDB_SECRET_KEY` | signs session cookies and login tickets; never change it casually (logs everyone out) |
+| `SADDB_ALLOWED_EMAILS` | optional comma list of emails and/or `@domain`s; empty = any verified Google account |
+| `SADDB_DEV_LOGIN` | `1` enables `/auth/dev?email=` for direct loopback requests only. Testing only |
+| `SADDB_SESSION_MINUTES`, `SADDB_MAX_SESSIONS` | box lifetime (45) and global box cap (4); one box per user |
+| `SADDB_DB` | SQLite path (default `data/saddb.sqlite`) |
 
 ## How it works
-- **One container per session** from `saddb/<slug>:latest`: `--network none`, 512 MB RAM, 1 CPU,
-  256 pids, `no-new-privileges`. The player is the OS user `postgres` (no sudo). Expired sessions are
-  reaped every 30 s.
-- **Terminal**: xterm.js ⇄ WebSocket ⇄ `docker exec bash -l` (PTY) in `app/main.py`.
-- **Grading**: `POST /api/sessions/{id}/check` runs `/opt/sad/check.sh` as root inside the box.
-  `/opt/sad` is root-only, so players can't read graders.
-- **Progress** is kept in the browser (localStorage). No accounts yet.
+- **One container per play session** from `saddb/<slug>:latest`: `--network none`, memory from the image's
+  `saddb.mem` label, 1 CPU, 256 pids, `no-new-privileges`. Labelled with its owner, and every API and
+  terminal call checks ownership. The reaper removes expired boxes and closes their attempts.
+- **The player** is the database's service account (`postgres`, `mysql`, `mongodb`, `redis`; image label
+  `saddb.user`), without sudo, with `dbctl start|stop|restart|status`. `/opt/sad` (graders, setup) is root-only.
+- **Terminal**: xterm.js ⇄ WebSocket (same-origin check + session cookie) ⇄ `docker exec bash -l`.
+- **Grading**: `/opt/sad/check.sh` runs as root in the box; exit 0 = solved. MySQL's grader logs in with its own
+  `auth_socket` account, so it works even if the player changes the root password.
+- **Login**: Google authorization-code flow → userinfo (verified email) → signed single-use ticket →
+  `PUBLIC_URL/auth/ticket` sets the session. A nonce cookie set at `/auth/login` must match (no login CSRF).
+- **Data** (SQLite): `users`, `progress` (per user × scenario: hints revealed, solution viewed, first solve, best
+  time), `attempts` (one per box: start/end, checks, hints, solved_at). Hints and solutions are served one at a
+  time by the API, so reveals are recorded.
 
 ## Adding a scenario
-`scenarios/<slug>/`:
+`scenarios/<slug>/` (slug prefix = engine: `pg-`, `mysql-`, `mongo-`, `redis-`):
 | file | when it runs | purpose |
 |---|---|---|
-| `scenario.toml` | web app | title, difficulty, minutes, order, tags, summary, description (markdown), hints[], solution |
-| `setup.sh` | `docker build`, as root | `pg_start`, load data, `pg_stop`, then break things. The data dir is baked into the image. |
-| `start.sh` (optional) | container start, as root | runtime misbehaviour (blocking sessions, leaks). Default: `pg_start`. |
+| `scenario.toml` | web app | `engine`, title, difficulty, minutes, `order` (position in the track), tags, summary, description (markdown), hints[], solution |
+| `setup.sh` | `docker build`, as root | `db_start`, load data, `db_stop`, then break things. Data is baked into the image. |
+| `start.sh` (optional) | box start, as root | runtime misbehaviour (blocking sessions, leaks). Default: `db_start`. |
 | `check.sh` | "Check" button, as root | exit 0 = solved. Print `PASS:`/`FAIL:` lines; the player sees them. |
 
-Helpers from `/usr/local/lib/sad/lib.sh`: `pg_start`, `pg_stop`, `sql` (heredoc psql as superuser),
-`q "select ..." [db]`, `pass`, `fail`.
+Helpers from `/usr/local/lib/sad/lib.sh` on every engine: `db_start`, `db_stop`, `pass`, `fail`, plus
+`sql`/`q` (Postgres, MySQL), `js`/`q` (MongoDB), `r` (redis-cli).
 
-Then `bin/sadb build <slug>`, add the reference fix to `tests/solve-all.sh`, and run it: every
-scenario must **fail** on the fresh box and **pass** after the fix.
-`bin/sadb shell <slug>` drops you into a throwaway box to play-test.
+Then add the reference fix as `tests/fixes/<slug>.sh` (runs as the player) and:
+```
+bin/sadb build <slug> && tests/solve-all.sh <slug>   # must FAIL on a fresh box and PASS after the fix
+bin/sadb shell <slug>                                # play-test in a throwaway box
+```
 
 ## Scenarios
-| slug | difficulty | skill |
-|---|---|---|
-| biggest-table | easy | catalogs, TOAST, `pg_total_relation_size` |
-| wont-start | easy | reading logs, `postgresql.auto.conf`, data dir perms |
-| locked-out | medium | `pg_hba.conf`, role attributes, password expiry, grants |
-| slow-query | medium | `EXPLAIN ANALYZE`, invalid indexes, composite indexes |
-| blocked-checkout | medium | `pg_stat_activity`, `pg_blocking_pids`, idle-in-transaction timeout |
-| id-overflow | medium | int4 sequence exhaustion, `ALTER COLUMN TYPE bigint`, FKs |
-| too-many-connections | hard | reserved slots, terminating backends, role connection limits |
+| track | slug | level | skill |
+|---|---|---|---|
+| Postgres | pg-biggest-table | easy | catalogs, TOAST, `pg_total_relation_size` |
+| | pg-wont-start | easy | reading logs, `postgresql.auto.conf`, data dir perms |
+| | pg-locked-out | medium | `pg_hba.conf`, role attributes, password expiry, grants |
+| | pg-slow-query | medium | `EXPLAIN ANALYZE`, invalid indexes, composite indexes |
+| | pg-blocked-checkout | medium | `pg_stat_activity`, `pg_blocking_pids`, idle-in-transaction timeout |
+| | pg-id-overflow | medium | int4 sequence exhaustion, `ALTER COLUMN TYPE bigint`, FKs |
+| | pg-too-many-connections | hard | reserved slots, terminating backends, role connection limits |
+| MySQL | mysql-wont-start | easy | removed 5.7 variables, error-log path |
+| | mysql-locked-out | medium | locked account, expired password, inactive default role |
+| | mysql-slow-query | medium | implicit type conversion disables an index |
+| | mysql-metadata-lock | hard | metadata locks, idle open transactions, `KILL` |
+| MongoDB | mongo-wont-start | easy | YAML tabs, wrong `dbPath` |
+| | mongo-slow-query | medium | `explain`, ESR compound index, in-memory sort |
+| | mongo-auth | medium | `authSource`, user database, least-privilege roles |
+| | mongo-duplicates | hard | aggregation dedupe, case-insensitive unique index |
+| Redis | redis-aof-corrupt | easy | multi-part AOF, `redis-check-aof --fix` |
+| | redis-oom | medium | `maxmemory-policy`, `CONFIG REWRITE` |
+| | redis-bigkey | easy | `MEMORY USAGE`, `--memkeys` vs `--bigkeys` |

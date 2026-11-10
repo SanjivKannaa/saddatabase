@@ -1,0 +1,38 @@
+engine = "mongo"
+title = "Authentication failed (but the user exists!)"
+difficulty = "medium"
+minutes = 15
+order = 3
+tags = ["mongodb", "auth", "roles"]
+summary = "Access control was switched on. The app's user is there, the password is right, and it can't log in."
+description = """
+Access control is now enabled on this server. The shop app uses the connection string in
+`/srv/app/app.env`, which you can read but **must not change**:
+
+```
+mongosh "$(cut -d= -f2- /srv/app/app.env)" --eval 'db.orders.insertOne({sku: "X"}); db.orders.countDocuments()'
+```
+
+Make that work. Your admin login is in `~/admin.txt`. Rules: keep access control on, and give `app`
+only what it needs in `shop`, nothing cluster-wide.
+"""
+hints = [
+  "Look at the connection string carefully, especially `authSource`.",
+  "Users live in a database. `use admin; db.getUsers()` then `use shop; db.getUsers()`.",
+  "Reading isn't writing: compare the app's roles with what the command does.",
+]
+solution = """
+`app` was created in the **`admin`** database, but the app authenticates with `authSource=shop`,
+so MongoDB looks for `app` in `shop` and finds nothing (`Authentication failed`). And its role was
+`read`, while the app also inserts.
+
+```js
+// mongosh -u admin -p '...' --authenticationDatabase admin
+use shop
+db.createUser({ user: "app", pwd: "Ap9-pass-2024", roles: [{ role: "readWrite", db: "shop" }] })
+use admin
+db.dropUser("app")      // tidy up the stray one
+```
+**Lesson:** a MongoDB user is identified by *name + authentication database*. `authSource` must point at the
+database where the user was created.
+"""

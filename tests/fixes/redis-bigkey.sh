@@ -1,0 +1,1 @@
+echo user:avatars > ~/solution

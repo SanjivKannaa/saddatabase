@@ -1,0 +1,34 @@
+engine = "mongo"
+title = "mongod refuses to fork"
+difficulty = "easy"
+minutes = 10
+order = 1
+tags = ["mongodb", "startup", "config", "yaml"]
+summary = "A config edit over the weekend and now mongod won't come up."
+description = """
+Someone "cleaned up" `/etc/mongodb/mongod.conf` and now **mongod won't start**.
+
+Get it running with all data intact: database `inventory`, collection `items`, 5000 documents.
+Start it with `dbctl start`.
+"""
+hints = [
+  "`dbctl start` prints mongod's complaint. Fix one thing, then try again.",
+  "YAML is picky about indentation. `cat -A /etc/mongodb/mongod.conf` shows tabs as `^I`.",
+  "Where is the data actually? `ls /srv`. Pointing mongod at an empty directory would start it, with no data.",
+]
+solution = """
+Two problems in `/etc/mongodb/mongod.conf`:
+
+1. A **tab** used for indentation (`cat -A` shows `^I`). YAML forbids tabs, so mongod can't parse the file.
+   Replace it with spaces.
+2. `dbPath: /srv/mongodb`, but the data lives in **`/srv/mongo`**. Fix the path.
+   (Creating an empty directory would start a server with *no data*, which is worse than a server that's down.)
+
+```
+cat -A /etc/mongodb/mongod.conf | grep -n '\\^I'
+nano /etc/mongodb/mongod.conf
+dbctl start
+mongosh --quiet inventory --eval 'db.items.countDocuments()'
+```
+**Lesson:** read the startup error, and never "fix" a missing data dir by creating an empty one.
+"""

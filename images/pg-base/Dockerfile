@@ -11,10 +11,12 @@ RUN mkdir -p /srv/pgdata /var/log/postgresql /opt/sad \
  && chmod 700 /opt/sad \
  && su postgres -c "initdb -D /srv/pgdata --auth-local=peer --auth-host=scram-sha-256 -E UTF8 --locale=C.UTF-8" >/dev/null
 COPY lib.sh /usr/local/lib/sad/lib.sh
-COPY sad-entrypoint /usr/local/bin/sad-entrypoint
+COPY --from=common sad-entrypoint /usr/local/bin/sad-entrypoint
+COPY dbctl /usr/local/bin/dbctl
 COPY motd /etc/motd
 COPY bashrc /var/lib/postgresql/.bashrc
 COPY bashrc /var/lib/postgresql/.profile
 RUN chown postgres:postgres /var/lib/postgresql/.bashrc /var/lib/postgresql/.profile
+LABEL saddb.user=postgres saddb.home=/var/lib/postgresql saddb.mem=512m
 WORKDIR /var/lib/postgresql
 ENTRYPOINT ["/usr/local/bin/sad-entrypoint"]

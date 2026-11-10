@@ -1,0 +1,1 @@
+mongosh --quiet -u admin -p Adm1n-lab-pw --authenticationDatabase admin shop --eval 'db.createUser({user: "app", pwd: "Ap9-pass-2024", roles: [{role: "readWrite", db: "shop"}]}); db.getSiblingDB("admin").dropUser("app")'

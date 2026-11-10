@@ -1,0 +1,4 @@
+export TERM=xterm-256color PAGER='less -SFRX' LESS=-SFRX
+export PS1='\[\e[1;35m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]$ '
+alias ll='ls -la'
+if [ -z "$SAD_MOTD_SHOWN" ]; then export SAD_MOTD_SHOWN=1; cat /etc/motd; fi

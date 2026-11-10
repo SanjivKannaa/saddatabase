@@ -1,0 +1,40 @@
+engine = "mysql"
+title = "The migration that froze the site"
+difficulty = "hard"
+minutes = 20
+order = 4
+tags = ["mysql", "locks", "metadata locks", "processlist"]
+summary = "A tiny ALTER TABLE was deployed. Now every query on that table hangs."
+description = """
+A deploy ran a harmless-looking migration on database `shop`:
+
+```sql
+ALTER TABLE products ADD COLUMN discount_pct INT NOT NULL DEFAULT 0;
+```
+
+Since then the product pages hang: even `SELECT * FROM products WHERE id = 1` never returns.
+
+Unblock the site **without restarting mysqld**. The migration must finish: `discount_pct` must exist.
+"""
+hints = [
+  "`show processlist;` What are the threads waiting for? Which one is the ALTER?",
+  "The ALTER is waiting too. For whom? Look at `sys.schema_table_lock_waits` or `performance_schema.metadata_locks`.",
+  "A transaction that is *open but idle* holds its locks forever. `information_schema.innodb_trx` shows open transactions and their thread ids.",
+]
+solution = """
+`SHOW PROCESSLIST` shows the `ALTER` and every `SELECT` in state **Waiting for table metadata lock**.
+
+The ALTER needs an exclusive metadata lock (MDL) on `products`. A `reporting` session ran
+`BEGIN; SELECT ... FROM products` and went idle **without committing**, so it holds a shared MDL. The ALTER
+queues behind it, and every new query queues behind the ALTER.
+
+```sql
+select * from sys.schema_table_lock_waits\\G         -- blocking_pid / sql_kill_blocking_connection
+select trx_mysql_thread_id, trx_started from information_schema.innodb_trx;
+KILL <thread id of the idle reporting session>;
+```
+The ALTER completes instantly and the SELECTs drain.
+
+**Lesson:** run migrations with a short `lock_wait_timeout` (e.g. `SET SESSION lock_wait_timeout = 5`) and retry,
+so a migration fails fast instead of freezing the site. Hunt down idle open transactions.
+"""

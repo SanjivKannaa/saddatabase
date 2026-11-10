@@ -1,0 +1,37 @@
+engine = "mysql"
+title = "Access denied, but why?"
+difficulty = "medium"
+minutes = 20
+order = 2
+tags = ["mysql", "accounts", "roles"]
+summary = "The billing app's account exists and the password is right. It still can't read its data."
+description = """
+The billing app connects like this, and the config is **not yours to change**:
+
+```
+mysql -h 127.0.0.1 -u app -p'S4fe-pass' billing -e 'select count(*) from accounts'
+```
+
+Make that command work. Don't hand `app` any global privileges: it should only be able
+to read the `billing` database.
+"""
+hints = [
+  "Run the command and read the error. Then run it again after every fix: there is more than one layer.",
+  "`select user, host, account_locked, password_expired from mysql.user where user='app';`",
+  "`show grants for 'app'@'%';` What does `select current_role();` say when you're logged in as app?",
+]
+solution = """
+Three layers:
+
+1. **Account locked** (`ERROR 3118 ... Account is locked`): `alter user 'app'@'%' account unlock;`
+2. **Password expired** (`ERROR 1820 ... You must reset your password`): an expired password can
+   only be cleared by setting it again. Keep the value the app uses:
+   `alter user 'app'@'%' identified by 'S4fe-pass';`
+   (`password expire never` changes the *policy*, not the flag that is already set.)
+3. **Role not active** (`SELECT command denied`): the privileges come from role `billing_reader`, which was
+   granted to `app` but is not a **default role**, so it's inactive after login.
+   `set default role billing_reader to 'app'@'%';`
+   (or set `activate_all_roles_on_login = ON` server-wide.)
+
+**Lesson:** MySQL 8 roles must be *active* to count. `show grants` lists the role, `current_role()` tells the truth.
+"""

@@ -1,0 +1,39 @@
+engine = "mysql"
+title = "The index that isn't used"
+difficulty = "medium"
+minutes = 20
+order = 3
+tags = ["mysql", "indexes", "explain", "types"]
+summary = "There is an index on the column. EXPLAIN says it's not used. The query can't change."
+description = """
+This query from the order-history page (database `shop`) takes far too long, and it's
+compiled into a mobile app, so **you can't change it**:
+
+```sql
+SELECT * FROM orders WHERE customer_ref = 4242 ORDER BY created_at DESC LIMIT 20;
+```
+
+There's an index on `customer_ref`. Make the query use an index and examine only a handful of
+rows, for any customer. Keep all 400,000 orders.
+"""
+hints = [
+  "`EXPLAIN` the query. Look at `type`, `possible_keys`, `key` and `rows`.",
+  "Compare the literal in the WHERE clause with the column's type: `show create table orders\\\\G`.",
+  "When MySQL compares a string column to a number, it converts every row's value to a number first.",
+]
+solution = """
+`customer_ref` is a `VARCHAR`, but the query compares it to the **number** `4242`. MySQL then
+converts each row's string to a number (`'04242'`, `'4242 '` and `'4242'` all equal 4242), so it
+can't use the index: `type: ALL`, ~400k rows.
+
+Since every value is numeric, store it as a number:
+```sql
+ALTER TABLE orders MODIFY customer_ref INT UNSIGNED NOT NULL;
+-- better still, let the index also serve the ORDER BY:
+ALTER TABLE orders ADD INDEX idx_cust_created (customer_ref, created_at);
+```
+`EXPLAIN` now shows `type: ref`, `key: idx_cust_created`, ~40 rows.
+
+**Lesson:** implicit type conversion silently disables indexes. Match column types to how they're queried
+(also in JOINs: `INT` vs `VARCHAR`, different collations).
+"""

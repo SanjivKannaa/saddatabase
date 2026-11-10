@@ -1,0 +1,37 @@
+engine = "redis"
+title = "Which key ate the RAM?"
+difficulty = "easy"
+minutes = 10
+order = 3
+tags = ["redis", "memory", "keys"]
+summary = "Memory jumped overnight. Find the single key using the most memory, without KEYS *."
+description = """
+`used_memory` on the session store jumped overnight. Find the **one key that uses the most memory**
+and write its name to `~/solution`:
+
+```
+echo 'the:key:name' > ~/solution
+```
+
+It's a production box in spirit: don't run `KEYS *` (it blocks the server). `SCAN` is fine.
+"""
+hints = [
+  "`redis-cli --bigkeys` is a start, but it ranks by *number of elements* per type, not bytes.",
+  "`MEMORY USAGE <key>` gives bytes. `redis-cli --memkeys` scans with it for you.",
+  "The key with the most items is not necessarily the one using the most memory.",
+]
+solution = """
+`redis-cli --bigkeys` reports `queue:emails` (a list with 200,000 items) as the "biggest" list, which looks guilty.
+But it's 200k *tiny* strings. Measure bytes instead:
+
+```
+redis-cli --memkeys            # samples every key with MEMORY USAGE
+redis-cli memory usage user:avatars
+redis-cli memory usage queue:emails
+echo user:avatars > ~/solution
+```
+`user:avatars` is a hash of 1,500 inline images of ~4 KB each, about 6 MB.
+
+**Lesson:** element count ≠ memory. `--memkeys` / `MEMORY USAGE` measure bytes, and `SCAN`-based tools
+don't block the server the way `KEYS *` does.
+"""

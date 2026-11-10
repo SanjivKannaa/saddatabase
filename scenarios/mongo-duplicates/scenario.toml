@@ -1,0 +1,39 @@
+engine = "mongo"
+title = "Two Bobs, one email"
+difficulty = "hard"
+minutes = 25
+order = 4
+tags = ["mongodb", "data cleanup", "unique index", "aggregation"]
+summary = "Signup let duplicate emails in. Clean them up and make it impossible from now on."
+description = """
+Signup has a race condition, and collection `users` (database `app`) now has duplicate accounts.
+Emails are **case-insensitive**: `Bob@Example.com` and `bob@example.com` are the same person.
+
+1. For every email, keep only the **most recently updated** document (`updatedAt`) and delete the others.
+2. Make the database itself reject a duplicate email from now on, in any letter case.
+"""
+hints = [
+  "Find duplicates with an aggregation: `$group` on `{ $toLower: \"$email\" }` and count.",
+  "Sort by `updatedAt` descending inside each group (`$sort` before `$group`, then `$push` the `_id`s): keep the first, delete the rest.",
+  "A unique index enforces uniqueness. For case-insensitivity: either store emails lower-cased, or give the index a collation with `strength: 2`.",
+]
+solution = """
+```js
+use app
+const dups = db.users.aggregate([
+  { $sort: { updatedAt: -1 } },
+  { $group: { _id: { $toLower: "$email" }, ids: { $push: "$_id" }, n: { $sum: 1 } } },
+  { $match: { n: { $gt: 1 } } }
+]).toArray();
+let gone = 0;
+dups.forEach(d => gone += db.users.deleteMany({ _id: { $in: d.ids.slice(1) } }).deletedCount);
+gone
+
+// Option A: unique, case-insensitive index (collation strength 2 ignores case)
+db.users.createIndex({ email: 1 }, { unique: true, collation: { locale: "en", strength: 2 } })
+// Option B: normalise, then a plain unique index
+// db.users.updateMany({}, [{ $set: { email: { $toLower: "$email" } } }]); db.users.createIndex({ email: 1 }, { unique: true })
+```
+**Lesson:** an application-level "check, then insert" is a race. Uniqueness belongs in the database, as an index.
+Note that queries only use a collation index when they specify the same collation.
+"""

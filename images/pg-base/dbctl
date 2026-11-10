@@ -1,0 +1,10 @@
+#!/bin/bash
+# dbctl start|stop|restart|status  (wraps pg_ctl)
+L=/var/log/postgresql/postgresql.log
+case $1 in
+  start)   pg_ctl -D "$PGDATA" -l $L -w -t 60 start ;;
+  stop)    pg_ctl -D "$PGDATA" -m fast -w stop ;;
+  restart) pg_ctl -D "$PGDATA" -m fast -w stop; pg_ctl -D "$PGDATA" -l $L -w -t 60 start ;;
+  status)  pg_ctl -D "$PGDATA" status ;;
+  *) echo "usage: dbctl start|stop|restart|status" ;;
+esac

@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs the scenario's start hook (default: start the database), then idles so the player can shell in.
+. /usr/local/lib/sad/lib.sh
+if [ -x /opt/sad/start.sh ]; then /opt/sad/start.sh; else db_start || true; fi
+touch /run/sad-ready
+exec sleep infinity

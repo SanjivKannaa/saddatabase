@@ -9,3 +9,5 @@ sql()      { su postgres -c "psql -X -q -v ON_ERROR_STOP=1 $*"; }
 q()        { su postgres -c "psql -X -At -d ${2:-postgres} -c \"$1\"" 2>/dev/null; }
 pass()     { echo "PASS: $*"; }
 fail()     { echo "FAIL: $*"; exit 1; }
+db_start() { pg_start; }
+db_stop()  { pg_stop; }

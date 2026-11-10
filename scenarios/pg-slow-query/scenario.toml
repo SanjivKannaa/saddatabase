@@ -1,0 +1,42 @@
+engine = "postgres"
+title = "The slow dashboard"
+difficulty = "medium"
+minutes = 20
+order = 4
+tags = ["postgres", "indexes", "explain"]
+summary = "A customer page query got slow, even though 'there is an index for that'."
+description = """
+The "my recent pending orders" page is timing out. The query (database `shop`):
+
+```sql
+select * from orders
+where customer_id = 4242 and status = 'pending'
+order by created_at desc
+limit 20;
+```
+
+The team swears there is an index on `customer_id`. Make this query run in **under 5 ms**
+(execution time, for any customer) and stop it from scanning the whole table.
+"""
+hints = [
+  "Start with `explain (analyze, buffers)` on the query.",
+  "Look carefully at `\\\\d orders`. Is every index usable?",
+  "An index that matches the WHERE *and* the ORDER BY lets Postgres stop after 20 rows.",
+]
+solution = """
+`\\d orders` shows `orders_customer_id_idx ... INVALID`: a `CREATE INDEX CONCURRENTLY` failed
+half-way and left an index the planner will never use (but every write still maintains it).
+The only other index, on `status`, isn't selective enough, so Postgres reads ~1/4 of the table.
+
+Fix: drop the broken index and build one that serves the whole query:
+```sql
+drop index orders_customer_id_idx;
+create index concurrently orders_cust_status_created_idx
+  on orders (customer_id, status, created_at desc);
+```
+(`reindex index concurrently orders_customer_id_idx;` would also make the old one valid, and
+work, but the composite index avoids the sort too.)
+
+**Lesson:** check for invalid indexes after any failed concurrent build:
+`select indexrelid::regclass from pg_index where not indisvalid;`
+"""

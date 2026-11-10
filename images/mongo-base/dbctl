@@ -1,0 +1,18 @@
+#!/bin/bash
+# dbctl start|stop|restart|status  for mongod (config: /etc/mongodb/mongod.conf)
+PID=/var/run/mongodb/mongod.pid; LOG=/var/log/mongodb/mongod.log
+alive() { [ -s $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
+start() {
+  alive && { echo "mongod is already running"; return 0; }
+  if out=$(mongod -f /etc/mongodb/mongod.conf 2>&1); then echo "mongod started"; return 0; fi
+  echo "mongod failed to start:"; echo "$out" | grep -v '^about to fork' | tail -5; echo "(log: $LOG)"; return 1
+}
+stop() {
+  alive || { echo "mongod is not running"; return 0; }
+  kill "$(cat $PID)"; for i in $(seq 120); do alive || { echo "mongod stopped"; return 0; }; sleep 0.5; done; return 1
+}
+case $1 in
+  start) start ;; stop) stop ;; restart) stop; start ;;
+  status) alive && echo "mongod is running (pid $(cat $PID))" || { echo "mongod is not running"; exit 3; } ;;
+  *) echo "usage: dbctl start|stop|restart|status" ;;
+esac

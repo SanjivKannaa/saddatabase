@@ -1,26 +1,34 @@
 #!/bin/bash
 # sadb: build scenario images and test them.
-#   sadb build [slug...]   build base + scenario images (all if no slug)
-#   sadb check <slug>      start a throwaway container and run its check (should FAIL: it's broken)
-#   sadb shell <slug>      start a throwaway container and open a shell as postgres
+#   sadb build [slug...]   build engine bases + scenario images (all if no slug)
+#   sadb bases             build only the engine base images
+#   sadb check <slug>      start a throwaway box and run its grader (should FAIL: it's broken)
+#   sadb shell <slug>      start a throwaway box and open a shell as the player
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+declare -A BASE=([postgres]=pg-base:17 [mysql]=mysql-base:8.4 [mongo]=mongo-base:7.0 [redis]=redis-base:8)
 cmd=${1:-help}; shift || true
 slugs() { if [ $# -gt 0 ]; then echo "$@"; else ls "$ROOT/scenarios"; fi; }
-run() { docker run -d --rm --init --network none --memory 512m --pids-limit 256 --label saddb.test=1 "saddb/$1:latest"; }
+engine() { sed -n 's/^engine *= *"\(.*\)"/\1/p' "$ROOT/scenarios/$1/scenario.toml"; }
+bases() {
+  for e in "${!BASE[@]}"; do
+    docker build -q --build-context common="$ROOT/images/common" -t "saddb/${BASE[$e]}" "$ROOT/images/${BASE[$e]%%:*}" >/dev/null
+    echo "built saddb/${BASE[$e]}"
+  done
+}
+label() { docker image inspect -f "{{index .Config.Labels \"saddb.$2\"}}" "saddb/$1:latest"; }
+run() { docker run -d --rm --init --network none --memory "$(label "$1" mem)" --pids-limit 256 --label saddb.test=1 "saddb/$1:latest"; }
+wait_ready() { for i in $(seq 240); do docker exec "$1" test -f /run/sad-ready 2>/dev/null && return 0; sleep 0.5; done; echo "box not ready"; return 1; }
 case $cmd in
+  bases) bases ;;
   build)
-    docker build -q -t saddb/pg-base:17 "$ROOT/images/pg-base" >/dev/null && echo "built saddb/pg-base:17"
+    bases
     for s in $(slugs "$@"); do
-      docker build -q -f "$ROOT/images/scenario.Dockerfile" -t "saddb/$s:latest" "$ROOT/scenarios/$s" >/dev/null && echo "built saddb/$s"
+      e=$(engine "$s"); [ -n "$e" ] || { echo "$s: no engine in scenario.toml"; exit 1; }
+      docker build -q --build-arg BASE="saddb/${BASE[$e]}" -f "$ROOT/images/scenario.Dockerfile" -t "saddb/$s:latest" "$ROOT/scenarios/$s" >/dev/null
+      echo "built saddb/$s ($e)"
     done ;;
-  check)
-    c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT
-    until docker exec "$c" test -f /run/sad-ready 2>/dev/null; do sleep 0.5; done
-    docker exec "$c" /opt/sad/check.sh || true ;;
-  shell)
-    c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT
-    until docker exec "$c" test -f /run/sad-ready 2>/dev/null; do sleep 0.5; done
-    docker exec -it -u postgres "$c" bash -l ;;
-  *) sed -n '2,6p' "$0" ;;
+  check) c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT; wait_ready "$c"; docker exec "$c" /opt/sad/check.sh || true ;;
+  shell) c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT; wait_ready "$c"; docker exec -it -u "$(label "$1" user)" -w "$(label "$1" home)" "$c" bash -l ;;
+  *) sed -n '2,7p' "$0" ;;
 esac

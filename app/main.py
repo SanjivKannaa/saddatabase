@@ -1,149 +1,280 @@
-"""sadDatabase: each session is a disposable, network-less container with a broken database."""
+"""sadDatabase: each play session is a disposable, network-less container with a broken database."""
 import asyncio
-import os
 import secrets
 import time
 import tomllib
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import docker
 from docker.errors import APIError, ImageNotFound, NotFound
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-ROOT = Path(__file__).resolve().parent.parent
-SCENARIOS_DIR = ROOT / "scenarios"
+from . import config, store
+from .auth import current_user, require_user, router as auth_router
+
+SCENARIOS_DIR = config.ROOT / "scenarios"
 STATIC = Path(__file__).resolve().parent / "static"
-SESSION_TTL = int(os.getenv("SADDB_SESSION_MINUTES", "45")) * 60
-MAX_SESSIONS = int(os.getenv("SADDB_MAX_SESSIONS", "4"))
 LABEL = "saddb.session"
 
+ENGINES = {
+    "postgres": {"name": "PostgreSQL", "version": "17", "color": "#336791",
+                 "blurb": "Startup failures, auth layers, slow plans, locks, sequences and connection limits."},
+    "mysql": {"name": "MySQL", "version": "8.4", "color": "#00758f",
+              "blurb": "Upgrade-broken configs, account and role gotchas, type conversion and metadata locks."},
+    "mongo": {"name": "MongoDB", "version": "7.0", "color": "#13aa52",
+              "blurb": "YAML configs, ESR indexes, authSource confusion and cleaning up duplicates."},
+    "redis": {"name": "Redis", "version": "8", "color": "#d82c20",
+              "blurb": "AOF repair, eviction policies and finding the key that eats memory."},
+}
+
 dk = docker.from_env()
-app = FastAPI(title="sadDatabase")
 
 
 def load_scenarios() -> dict[str, dict]:
     out = {}
-    for f in sorted(SCENARIOS_DIR.glob("*/scenario.toml")):
+    for f in SCENARIOS_DIR.glob("*/scenario.toml"):
         meta = tomllib.loads(f.read_text())
         meta["slug"] = f.parent.name
-        out[meta["slug"]] = meta
-    return dict(sorted(out.items(), key=lambda kv: kv[1].get("order", 99)))
+        if meta.get("engine") in ENGINES:
+            out[meta["slug"]] = meta
+    order = list(ENGINES)
+    return dict(sorted(out.items(), key=lambda kv: (order.index(kv[1]["engine"]), kv[1].get("order", 99))))
 
 
 SCENARIOS = load_scenarios()
 
 
 def public(meta: dict, full: bool = False) -> dict:
-    keys = ["slug", "title", "difficulty", "minutes", "tags", "summary"]
+    e = ENGINES[meta["engine"]]
+    d = {k: meta.get(k) for k in ("slug", "engine", "title", "difficulty", "minutes", "tags", "summary", "order")}
+    d["engine_name"] = f"{e['name']} {e['version']}"
     if full:
-        keys += ["description", "hints", "solution"]
-    return {k: meta.get(k) for k in keys} | {"engine": "PostgreSQL 17"}
+        d["description"] = meta["description"]
+        d["hints_total"] = len(meta.get("hints", []))
+        track = [s for s in SCENARIOS.values() if s["engine"] == meta["engine"]]
+        i = [s["slug"] for s in track].index(meta["slug"])
+        d["next"] = track[i + 1]["slug"] if i + 1 < len(track) else None
+        d["prev"] = track[i - 1]["slug"] if i > 0 else None
+        d["position"], d["track_size"] = i + 1, len(track)
+    return d
 
 
-def find(sid: str):
+def scenario(slug: str) -> dict:
+    if slug not in SCENARIOS:
+        raise HTTPException(404, "no such scenario")
+    return SCENARIOS[slug]
+
+
+def session_info(c) -> dict:
+    return {"id": c.labels[LABEL], "slug": c.labels["saddb.slug"],
+            "expires_at": int(c.labels["saddb.expires"]), "status": c.status}
+
+
+def user_boxes(uid: int):
+    return dk.containers.list(filters={"label": [LABEL, f"saddb.owner={uid}"]})
+
+
+def find(sid: str, user: dict):
     if not sid.isalnum():
         raise HTTPException(404, "no such session")
     cs = dk.containers.list(all=True, filters={"label": f"{LABEL}={sid}"})
     if not cs:
         raise HTTPException(404, "session expired or not found")
+    if cs[0].labels.get("saddb.owner") != str(user["id"]):
+        raise HTTPException(403, "not your session")
     return cs[0]
 
 
-def session_info(c) -> dict:
-    return {
-        "id": c.labels[LABEL],
-        "slug": c.labels["saddb.slug"],
-        "expires_at": int(c.labels["saddb.expires"]),
-        "status": c.status,
-    }
+# ---------------------------------------------------------------- lifecycle
+
+async def reaper():
+    while True:
+        try:
+            now = time.time()
+            boxes = dk.containers.list(all=True, filters={"label": LABEL})
+            live = {c.labels[LABEL] for c in boxes}
+            for sid in store.open_session_ids():       # boxes that vanished (host reboot, manual removal)
+                if sid not in live:
+                    store.end_attempt(sid, "lost")
+            for c in boxes:
+                if int(c.labels.get("saddb.expires", 0)) < now or c.status == "exited":
+                    store.end_attempt(c.labels[LABEL], "expired")
+                    try:
+                        c.remove(force=True)
+                    except (NotFound, APIError):
+                        pass
+        except Exception as e:  # keep reaping whatever happens
+            print("reaper:", e)
+        await asyncio.sleep(30)
 
 
-@app.get("/api/scenarios")
-def list_scenarios():
-    return [public(m) for m in SCENARIOS.values()]
+@asynccontextmanager
+async def lifespan(_app):
+    store.init()
+    task = asyncio.create_task(reaper())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="sadDatabase", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=config.SECRET_KEY, session_cookie="saddb_session",
+                   max_age=30 * 86400, same_site="lax", https_only=config.SECURE_COOKIES)
+app.include_router(auth_router)
+
+
+# ---------------------------------------------------------------- catalogue
+
+@app.get("/api/me")
+def me(request: Request):
+    u = current_user(request)
+    if not u:
+        return {"user": None, "google": bool(config.GOOGLE_CLIENT_ID), "dev_login": config.DEV_LOGIN}
+    boxes = user_boxes(u["id"])
+    return {"user": u, "active_session": session_info(boxes[0]) if boxes else None}
+
+
+@app.get("/api/tracks")
+def tracks(request: Request):
+    u = current_user(request)
+    prog = store.progress_for(u["id"]) if u else {}
+    out = []
+    for key, e in ENGINES.items():
+        items = []
+        for s in (s for s in SCENARIOS.values() if s["engine"] == key):
+            p = prog.get(s["slug"], {})
+            items.append(public(s) | {"solved": bool(p.get("first_solved_at")), "attempts": p.get("attempts", 0),
+                                      "best_seconds": p.get("best_seconds")})
+        out.append({"engine": key, **e, "scenarios": items, "solved": sum(i["solved"] for i in items)})
+    return out
 
 
 @app.get("/api/scenarios/{slug}")
-def get_scenario(slug: str):
-    if slug not in SCENARIOS:
-        raise HTTPException(404, "no such scenario")
-    return public(SCENARIOS[slug], full=True)
+def get_scenario(slug: str, request: Request):
+    s = scenario(slug)
+    d = public(s, full=True)
+    u = current_user(request)
+    p = store.progress_for(u["id"]).get(slug, {}) if u else {}
+    n = p.get("hints_revealed", 0)
+    d["hints"] = s["hints"][:n]
+    d["solution"] = s["solution"] if p.get("solution_viewed") else None
+    d["solved"] = bool(p.get("first_solved_at"))
+    d["best_seconds"] = p.get("best_seconds")
+    return d
 
+
+@app.post("/api/scenarios/{slug}/hint")
+def next_hint(slug: str, u: dict = Depends(require_user)):
+    s = scenario(slug)
+    r = store.reveal(u["id"], slug, len(s["hints"]))
+    return {"hints": s["hints"][:r["hints_revealed"]]}
+
+
+@app.post("/api/scenarios/{slug}/solution")
+def show_solution(slug: str, u: dict = Depends(require_user)):
+    s = scenario(slug)
+    store.reveal(u["id"], slug, len(s["hints"]), solution=True)
+    return {"solution": s["solution"]}
+
+
+@app.get("/api/me/history")
+def my_history(u: dict = Depends(require_user)):
+    rows = store.history(u["id"])
+    for r in rows:
+        s = SCENARIOS.get(r["slug"])
+        r["title"], r["engine"] = (s["title"], s["engine"]) if s else (r["slug"], "?")
+    return rows
+
+
+@app.get("/api/leaderboard")
+def leaderboard():
+    return store.leaderboard()
+
+
+# ---------------------------------------------------------------- sandboxes
 
 class StartReq(BaseModel):
     slug: str
 
 
 @app.post("/api/sessions")
-def start_session(req: StartReq):
-    if req.slug not in SCENARIOS:
-        raise HTTPException(404, "no such scenario")
-    running = dk.containers.list(filters={"label": LABEL})
-    if len(running) >= MAX_SESSIONS:
-        raise HTTPException(429, f"all {MAX_SESSIONS} sandboxes are busy; end one or try again later")
-    sid = secrets.token_hex(12)
-    expires = int(time.time()) + SESSION_TTL
+def start_session(req: StartReq, u: dict = Depends(require_user)):
+    scenario(req.slug)
+    mine = user_boxes(u["id"])
+    if mine:
+        raise HTTPException(409, f"you already have a box running ({mine[0].labels['saddb.slug']}); end it first")
+    if len(dk.containers.list(filters={"label": LABEL})) >= config.MAX_SESSIONS:
+        raise HTTPException(429, f"all {config.MAX_SESSIONS} sandboxes are busy; try again in a few minutes")
+    image = f"saddb/{req.slug}:latest"
     try:
-        c = dk.containers.run(
-            f"saddb/{req.slug}:latest",
-            detach=True,
-            auto_remove=False,
-            name=f"saddb-{req.slug}-{sid[:6]}",
-            hostname=f"sad-{req.slug}"[:63],
-            labels={LABEL: sid, "saddb.slug": req.slug, "saddb.expires": str(expires)},
-            network_mode="none",          # no way in or out except docker exec
-            mem_limit="512m",
-            memswap_limit="512m",
-            nano_cpus=1_000_000_000,
-            pids_limit=256,
-            init=True,
-            security_opt=["no-new-privileges"],
-            cap_drop=["NET_RAW", "MKNOD", "AUDIT_WRITE", "SYS_CHROOT", "SETFCAP", "NET_BIND_SERVICE"],
-        )
+        labels = dk.images.get(image).labels or {}
     except ImageNotFound:
-        raise HTTPException(503, f"image saddb/{req.slug} not built; run bin/sadb build {req.slug}")
+        raise HTTPException(503, f"image {image} is not built; run bin/sadb build {req.slug}")
+    sid = secrets.token_hex(12)
+    expires = int(time.time()) + config.SESSION_TTL
+    mem = labels.get("saddb.mem", "512m")
+    c = dk.containers.run(
+        image, detach=True,
+        name=f"saddb-{req.slug}-{sid[:6]}", hostname=f"sad-{req.slug}"[:63],
+        labels={LABEL: sid, "saddb.slug": req.slug, "saddb.owner": str(u["id"]), "saddb.expires": str(expires)},
+        network_mode="none",           # no way in or out except docker exec
+        mem_limit=mem, memswap_limit=mem, nano_cpus=1_000_000_000, pids_limit=256,
+        init=True, security_opt=["no-new-privileges"],
+        cap_drop=["NET_RAW", "MKNOD", "AUDIT_WRITE", "SYS_CHROOT", "SETFCAP", "NET_BIND_SERVICE"],
+    )
+    store.start_attempt(u["id"], req.slug, sid)
     return session_info(c)
 
 
 @app.get("/api/sessions/{sid}")
-def get_session(sid: str):
-    c = find(sid)
-    info = session_info(c)
-    ready = c.exec_run(["test", "-f", "/run/sad-ready"]).exit_code == 0 if c.status == "running" else False
-    return info | {"ready": ready}
+def get_session(sid: str, u: dict = Depends(require_user)):
+    c = find(sid, u)
+    ready = c.status == "running" and c.exec_run(["test", "-f", "/run/sad-ready"]).exit_code == 0
+    return session_info(c) | {"ready": ready}
 
 
 @app.post("/api/sessions/{sid}/check")
-def check_session(sid: str):
-    c = find(sid)
-    r = c.exec_run(["timeout", "60", "/opt/sad/check.sh"], user="root")
-    out = r.output.decode(errors="replace").strip()
-    return {"passed": r.exit_code == 0, "output": out}
+def check_session(sid: str, u: dict = Depends(require_user)):
+    c = find(sid, u)
+    r = c.exec_run(["timeout", "90", "/opt/sad/check.sh"], user="root")
+    passed = r.exit_code == 0
+    rec = store.record_check(sid, passed)
+    return {"passed": passed, "output": r.output.decode(errors="replace").strip(), "seconds": rec.get("seconds")}
 
 
 @app.delete("/api/sessions/{sid}")
-def end_session(sid: str):
-    find(sid).remove(force=True)
+def end_session(sid: str, u: dict = Depends(require_user)):
+    find(sid, u).remove(force=True)
+    store.end_attempt(sid, "ended")
     return {"ok": True}
 
 
 @app.websocket("/api/sessions/{sid}/tty")
 async def tty(ws: WebSocket, sid: str):
+    origin = ws.headers.get("origin", "")
+    host = ws.headers.get("host", "")
     await ws.accept()
     try:
-        c = find(sid)
+        if origin.split("://", 1)[-1] != host:
+            raise HTTPException(403, "cross-site terminal request refused")
+        uid = ws.session.get("uid")
+        user = store.get_user(uid) if uid else None
+        if not user:
+            raise HTTPException(401, "sign in first")
+        c = find(sid, user)
     except HTTPException as e:
         await ws.send_text(f"\r\n\x1b[31m{e.detail}\x1b[0m\r\n")
         await ws.close()
         return
+    cfg = c.attrs["Config"]["Labels"]
     api = dk.api
-    ex = api.exec_create(c.id, ["bash", "-l"], stdin=True, tty=True, user="postgres",
-                         workdir="/var/lib/postgresql", environment={"TERM": "xterm-256color"})
-    sock = api.exec_start(ex["Id"], socket=True, tty=True)
-    raw = sock._sock
+    ex = api.exec_create(c.id, ["bash", "-l"], stdin=True, tty=True, user=cfg.get("saddb.user", "postgres"),
+                         workdir=cfg.get("saddb.home", "/"), environment={"TERM": "xterm-256color"})
+    raw = api.exec_start(ex["Id"], socket=True, tty=True)._sock
     raw.setblocking(True)
     loop = asyncio.get_running_loop()
 
@@ -170,10 +301,10 @@ async def tty(ws: WebSocket, sid: str):
             elif msg.get("text"):
                 t = msg["text"]
                 if t.startswith("\x00resize:"):           # control message: \0resize:<cols>x<rows>
-                    cols, rows = (int(v) for v in t[8:].split("x"))
                     try:
+                        cols, rows = (int(v) for v in t[8:].split("x"))
                         api.exec_resize(ex["Id"], height=rows, width=cols)
-                    except APIError:
+                    except (ValueError, APIError):
                         pass
                 else:
                     await loop.run_in_executor(None, raw.sendall, t.encode())
@@ -190,23 +321,6 @@ async def tty(ws: WebSocket, sid: str):
             await ws.close()
         except RuntimeError:
             pass
-
-
-async def reaper():
-    while True:
-        now = time.time()
-        for c in dk.containers.list(all=True, filters={"label": LABEL}):
-            if int(c.labels.get("saddb.expires", 0)) < now or c.status == "exited":
-                try:
-                    c.remove(force=True)
-                except (NotFound, APIError):
-                    pass
-        await asyncio.sleep(30)
-
-
-@app.on_event("startup")
-async def _start_reaper():
-    asyncio.create_task(reaper())
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

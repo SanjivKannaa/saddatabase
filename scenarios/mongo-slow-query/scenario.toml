@@ -1,0 +1,33 @@
+engine = "mongo"
+title = "COLLSCAN on the hot path"
+difficulty = "medium"
+minutes = 15
+order = 2
+tags = ["mongodb", "indexes", "explain"]
+summary = "The 'my pending orders' query reads the whole collection and sorts in memory."
+description = """
+The orders page runs this (database `shop`):
+
+```js
+db.orders.find({ customerId: 4242, status: "pending" }).sort({ createdAt: -1 }).limit(20)
+```
+
+Make it examine **at most 50 documents** and avoid an in-memory sort, for any customer.
+"""
+hints = [
+  "`.explain(\"executionStats\")` on the query: look at `winningPlan` stages and `totalDocsExamined`.",
+  "Which indexes exist? `db.orders.getIndexes()`. Does any of them start with `customerId`?",
+  "The ESR rule: put **E**quality fields first, then the **S**ort field, then **R**ange fields.",
+]
+solution = """
+The only indexes are on `status` and `createdAt`, so MongoDB either scans every `pending` order or walks
+the whole `createdAt` index. Thousands of documents for 20 results, and possibly a blocking `SORT` stage.
+
+Build an index that follows **ESR** (Equality, Sort, Range):
+```js
+db.orders.createIndex({ customerId: 1, status: 1, createdAt: -1 })
+```
+Now the plan is `IXSCAN → FETCH → LIMIT`, no `SORT`, and `totalDocsExamined` is ≤ 20.
+
+**Lesson:** an index that matches both the filter and the sort lets the database stop early.
+"""

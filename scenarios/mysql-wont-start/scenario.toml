@@ -1,0 +1,36 @@
+engine = "mysql"
+title = "Migrated config, dead server"
+difficulty = "easy"
+minutes = 10
+order = 1
+tags = ["mysql", "startup", "config"]
+summary = "Someone copied the my.cnf tuning from the old 5.7 box. MySQL 8.4 won't start."
+description = """
+During the upgrade from MySQL 5.7, an engineer copied the old tuning file to
+`/etc/mysql/conf.d/`. Now **mysqld won't start**.
+
+Get MySQL running with database `inventory` intact (table `items` must still have its 5000 rows).
+Start it with `dbctl start`.
+"""
+hints = [
+  "`dbctl start` and read what it says. If it says little, look for the error log path in the config.",
+  "Where is mysqld trying to write its error log? Does that directory exist, and can you create it?",
+  "Some server variables were **removed** in MySQL 8.0. An unknown variable stops the server cold.",
+]
+solution = """
+Two problems in `/etc/mysql/conf.d/legacy-tuning.cnf`:
+
+1. `log-error = /var/log/mysql-legacy/error.log`: that directory doesn't exist and you can't create it
+   under `/var/log`, so mysqld can't even open its log and dies printing to the terminal.
+   Delete the line (the main config already logs to `/var/log/mysql/error.log`).
+2. `query_cache_size` / `query_cache_type`: the query cache was **removed in MySQL 8.0**;
+   `unknown variable 'query_cache_size=64M'` aborts startup. Delete both lines.
+
+```
+nano /etc/mysql/conf.d/legacy-tuning.cnf
+dbctl start
+mysql -e 'select count(*) from inventory.items'
+```
+**Lesson:** after a major upgrade, diff your config against the removed-variables list, and
+`mysqld --validate-config` checks a config without starting the server.
+"""

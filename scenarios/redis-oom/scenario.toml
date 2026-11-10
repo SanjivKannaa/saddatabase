@@ -1,0 +1,38 @@
+engine = "redis"
+title = "OOM command not allowed"
+difficulty = "medium"
+minutes = 15
+order = 2
+tags = ["redis", "memory", "eviction", "config"]
+summary = "The cache is full, and instead of forgetting old entries it rejects every write."
+description = """
+This Redis is a **cache** for the product catalogue. Since this morning every write fails:
+
+```
+redis-cli set cache:product:1 '{"name":"lamp"}'
+(error) OOM command not allowed when used memory > 'maxmemory'.
+```
+
+1. Make writes work again. Keep a memory limit: this box has 512 MB and Redis must stay under 200 MB.
+2. Make sure a full cache can't block writes again, **and that your fix survives a Redis restart**.
+"""
+hints = [
+  "`redis-cli info memory`: compare `used_memory_human`, `maxmemory_human` and `maxmemory_policy`.",
+  "What should a *cache* do when it's full? Read about `maxmemory-policy`. Do the cache keys have TTLs? (`redis-cli ttl cache:product:1`)",
+  "`CONFIG SET` only changes the running server. `CONFIG REWRITE` (or editing `/etc/redis/redis.conf`) makes it stick.",
+]
+solution = """
+`maxmemory` is 40 MB with `maxmemory-policy noeviction`, and the cache holds more than that. With
+`noeviction`, Redis refuses writes when full instead of dropping old data.
+
+For a cache, evict the least recently used keys. The `cache:*` keys have **no TTL**, so `volatile-lru`
+(which only evicts keys that have a TTL) wouldn't help: use `allkeys-lru` (or `allkeys-lfu`).
+
+```
+redis-cli config set maxmemory-policy allkeys-lru
+redis-cli config rewrite        # persist to /etc/redis/redis.conf
+redis-cli set cache:product:1 '{"name":"lamp"}'
+```
+**Lesson:** `noeviction` suits a primary datastore and `allkeys-*` suits a cache. Know which one your Redis is.
+Setting `maxmemory 0` would "work" until the kernel's OOM killer arrives.
+"""

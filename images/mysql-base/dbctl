@@ -1,0 +1,20 @@
+#!/bin/bash
+# dbctl start|stop|restart|status  for mysqld (config: /etc/my.cnf + /etc/mysql/conf.d/*.cnf)
+PID=/var/run/mysqld/mysqld.pid; LOG=/var/log/mysql/error.log
+alive() { [ -s $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
+start() {
+  alive && { echo "mysqld is already running"; return 0; }
+  if ! out=$(mysqld --defaults-file=/etc/my.cnf --daemonize 2>&1); then
+    echo "mysqld failed to start."; [ -n "$out" ] && echo "$out" | tail -5; echo "(error log: $LOG)"; return 1; fi
+  for i in $(seq 60); do [ -S /var/run/mysqld/mysqld.sock ] && alive && { echo "mysqld started"; return 0; }; sleep 0.5; done
+  echo "mysqld did not come up; see $LOG"; return 1
+}
+stop() {
+  alive || { echo "mysqld is not running"; return 0; }
+  kill "$(cat $PID)"; for i in $(seq 120); do alive || { echo "mysqld stopped"; return 0; }; sleep 0.5; done; return 1
+}
+case $1 in
+  start) start ;; stop) stop ;; restart) stop; start ;;
+  status) alive && echo "mysqld is running (pid $(cat $PID))" || { echo "mysqld is not running"; exit 3; } ;;
+  *) echo "usage: dbctl start|stop|restart|status" ;;
+esac

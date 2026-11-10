@@ -1,0 +1,35 @@
+engine = "redis"
+title = "Bad file format reading the append only file"
+difficulty = "easy"
+minutes = 15
+order = 1
+tags = ["redis", "persistence", "aof"]
+summary = "The box lost power mid-write. Redis now refuses to load its AOF."
+description = """
+The host crashed while Redis was writing, and now **Redis won't start**.
+
+Get Redis running again with **append-only persistence still on**, keeping as much data as possible
+(there were 10,000 `key:*` keys; losing a few of the last writes is acceptable).
+Start it with `dbctl start`.
+"""
+hints = [
+  "`dbctl start`, then read the end of `/var/log/redis/redis.log`. It tells you exactly what to run.",
+  "Since Redis 7 the AOF is a directory: `ls -la /srv/redis/appendonlydir/`. There's a manifest, a base file and an incremental file.",
+  "`redis-check-aof` can repair it. Back up the directory first: `cp -a /srv/redis/appendonlydir ~/aof-backup`.",
+]
+solution = """
+The log says: `Bad file format reading the append only file appendonly.aof.1.incr.aof`.
+The AOF has garbage in it, so Redis stops rather than load a possibly wrong dataset.
+
+```
+cp -a /srv/redis/appendonlydir ~/aof-backup      # always keep the original
+redis-check-aof --fix /srv/redis/appendonlydir/appendonly.aof.manifest
+dbctl start
+redis-cli dbsize                                 # ~9,950 of 10,000
+```
+`--fix` truncates the file at the first bad command, so everything after it is lost. Disabling
+`appendonly` would also "start" Redis, but with an empty or stale dataset.
+
+**Lesson:** `aof-load-truncated yes` (the default) only handles a cut-off *last* command; corruption in
+the middle needs `redis-check-aof`. Back up before you repair.
+"""
