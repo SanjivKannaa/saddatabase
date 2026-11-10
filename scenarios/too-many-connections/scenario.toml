@@ -1,0 +1,36 @@
+title = "Sorry, too many clients"
+difficulty = "hard"
+minutes = 20
+order = 7
+tags = ["postgres", "connections", "roles"]
+summary = "The app can't get a connection. A misbehaving service is hogging all of them."
+description = """
+The `web` app (role `web`, password `w3b`) fails to connect to database `app`:
+
+```
+PGPASSWORD=w3b psql -h 127.0.0.1 -U web app -c 'select 1'
+```
+
+1. Get `web` connected again without restarting PostgreSQL.
+2. Make sure the **`metrics`** role can never take more than **5** connections again,
+   so it can't starve everyone else.
+"""
+hints = [
+  "You (superuser) can still get in, because some slots are reserved for superusers. Who holds the others? `select usename, application_name, state, count(*) from pg_stat_activity group by 1,2,3;`",
+  "Free the slots with `pg_terminate_backend()`.",
+  "Limits can be set per role: look at `alter role ... connection limit`.",
+]
+solution = """
+`max_connections` is 15 and 3 slots are reserved for superusers, so 12 are usable, and a leaky
+`metrics-collector` holds all 12, idle. Hence `FATAL: remaining connection slots are reserved...`.
+
+```sql
+select pg_terminate_backend(pid) from pg_stat_activity where usename = 'metrics';
+alter role metrics connection limit 5;
+```
+Also worth doing: `alter role metrics set idle_session_timeout = '5min';` and, in real life,
+a connection pooler (PgBouncer) in front of chatty apps.
+
+**Lesson:** `superuser_reserved_connections` is your emergency door; per-role connection limits keep
+one tenant from starving the rest.
+"""

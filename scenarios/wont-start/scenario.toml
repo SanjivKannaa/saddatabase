@@ -1,0 +1,37 @@
+title = "It won't start"
+difficulty = "easy"
+minutes = 10
+order = 2
+tags = ["postgres", "startup", "config"]
+summary = "After a config change and a restore, Postgres refuses to come up."
+description = """
+A colleague tuned the server and restored a file-level copy of the data directory over the
+weekend. Now PostgreSQL **won't start**.
+
+Get PostgreSQL running and accepting connections, **without losing data**: database `inventory`
+must still have its rows. Don't re-`initdb`.
+
+Start it with `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start`.
+"""
+hints = [
+  "Always read the log first: `tail -n 30 /var/log/postgresql/postgresql.log`.",
+  "There is more than one problem. Fix one, try again, read the log again.",
+  "Postgres is strict about who can read the data directory. Compare `ls -ld $PGDATA` with what the log says is allowed.",
+]
+solution = """
+Two problems, one at a time, each found in the log.
+
+1. `invalid value for parameter "shared_buffers": "128MBB"` — a typo in `postgresql.conf`.
+   ```
+   grep -n shared_buffers $PGDATA/postgresql.conf $PGDATA/postgresql.auto.conf
+   ```
+   It was set in **`postgresql.auto.conf`** (written by `ALTER SYSTEM`), which overrides `postgresql.conf`.
+   Fix the unit (`128MB`) or delete that line.
+2. `data directory "/srv/pgdata" has invalid permissions` — the restore left it `0755`.
+   ```
+   chmod 700 $PGDATA
+   ```
+Then `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start` and `psql -d inventory -c 'select count(*) from items'`.
+
+**Lesson:** read the log, fix one thing at a time, and remember `postgresql.auto.conf` wins over `postgresql.conf`.
+"""

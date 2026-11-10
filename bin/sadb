@@ -1,0 +1,26 @@
+#!/bin/bash
+# sadb: build scenario images and test them.
+#   sadb build [slug...]   build base + scenario images (all if no slug)
+#   sadb check <slug>      start a throwaway container and run its check (should FAIL: it's broken)
+#   sadb shell <slug>      start a throwaway container and open a shell as postgres
+set -euo pipefail
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+cmd=${1:-help}; shift || true
+slugs() { if [ $# -gt 0 ]; then echo "$@"; else ls "$ROOT/scenarios"; fi; }
+run() { docker run -d --rm --init --network none --memory 512m --pids-limit 256 --label saddb.test=1 "saddb/$1:latest"; }
+case $cmd in
+  build)
+    docker build -q -t saddb/pg-base:17 "$ROOT/images/pg-base" >/dev/null && echo "built saddb/pg-base:17"
+    for s in $(slugs "$@"); do
+      docker build -q -f "$ROOT/images/scenario.Dockerfile" -t "saddb/$s:latest" "$ROOT/scenarios/$s" >/dev/null && echo "built saddb/$s"
+    done ;;
+  check)
+    c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT
+    until docker exec "$c" test -f /run/sad-ready 2>/dev/null; do sleep 0.5; done
+    docker exec "$c" /opt/sad/check.sh || true ;;
+  shell)
+    c=$(run "$1"); trap 'docker rm -f $c >/dev/null' EXIT
+    until docker exec "$c" test -f /run/sad-ready 2>/dev/null; do sleep 0.5; done
+    docker exec -it -u postgres "$c" bash -l ;;
+  *) sed -n '2,6p' "$0" ;;
+esac

@@ -1,0 +1,8 @@
+
+  ┌─ sadDatabase ────────────────────────────────────────────────┐
+  │ You are the OS user "postgres" (no sudo). PGDATA=/srv/pgdata │
+  │ Server log: /var/log/postgresql/postgresql.log               │
+  │ Tools: psql, pg_ctl, ps, less, nano, vi                      │
+  │ No network: this box is isolated. Read the task, fix it.     │
+  └──────────────────────────────────────────────────────────────┘
+

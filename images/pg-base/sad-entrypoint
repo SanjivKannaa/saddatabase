@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs the scenario's start hook (default: start postgres), then idles so the user can shell in.
+. /usr/local/lib/sad/lib.sh
+if [ -x /opt/sad/start.sh ]; then /opt/sad/start.sh; else pg_start; fi
+echo "scenario ready" > /run/sad-ready
+exec sleep infinity

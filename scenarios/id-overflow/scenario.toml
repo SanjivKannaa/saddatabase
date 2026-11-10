@@ -1,0 +1,39 @@
+title = "Two billion events"
+difficulty = "medium"
+minutes = 20
+order = 6
+tags = ["postgres", "sequences", "data types", "ddl"]
+summary = "Inserts started failing overnight. The table didn't get any bigger. What happened?"
+description = """
+Since 03:12 every insert into `events` (database `tracking`) fails:
+
+```sql
+insert into events (kind, payload) values ('click', '{}') returning id;
+```
+
+Fix it so inserts work again **for years to come**, including tagging new events in
+`event_tags`. Keep every existing row.
+"""
+hints = [
+  "Read the error carefully. Then `\\\\d events` and `\\\\d events_id_seq`.",
+  "`serial` means `integer`, and integers stop at 2,147,483,647. Both the column and the sequence have a type.",
+  "Who else stores event ids? Look for foreign keys: `\\\\d event_tags`.",
+]
+solution = """
+`events.id` is a `serial`: an `integer` column fed by an `integer` sequence, and the sequence hit
+2147483647 (`nextval: reached maximum value of sequence`). Rows were inserted with big gaps, so the
+table is small but the ids ran out.
+
+Widen everything that holds an event id:
+```sql
+alter table events alter column id type bigint;
+alter sequence events_id_seq as bigint;          -- max becomes 9223372036854775807
+alter table event_tags alter column event_id type bigint;
+```
+Restarting the sequence at 1 is **not** a fix: you'd hit the same wall (and the old ids) again.
+
+**Lesson:** use `bigint` / `bigserial` (or `bigint generated always as identity`) for ids.
+On a big production table, `alter column type` rewrites the table under an exclusive lock, so plan for it
+(new column + backfill, or a tool like pg-osc). Monitor sequence headroom:
+`select seqrelid::regclass, last_value from pg_sequences ...`.
+"""

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sadDatabase</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><ellipse cx='16' cy='7' rx='11' ry='4' fill='%23d97757'/><path d='M5 7v18c0 2.2 4.9 4 11 4s11-1.8 11-4V7' fill='none' stroke='%23d97757' stroke-width='2.5'/><circle cx='12' cy='17' r='1.5' fill='%23d97757'/><circle cx='20' cy='17' r='1.5' fill='%23d97757'/><path d='M11.5 23c2.5-2.2 6.5-2.2 9 0' fill='none' stroke='%23d97757' stroke-width='1.8' stroke-linecap='round'/></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f6f4ef; --panel: #fffdf8; --ink: #23201b; --muted: #6f685d; --line: #e3ddd1;
+  --accent: #c25a3a; --accent-ink: #fff; --ok: #2f7d4f; --ok-bg: #e5f3ea; --bad: #b3362b; --bad-bg: #fbe9e6;
+  --easy: #2f7d4f; --medium: #a46a10; --hard: #b3362b; --code-bg: #efeadf; --term: #1b1a17;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161513; --panel: #1f1d1a; --ink: #ece7dd; --muted: #a39c8f; --line: #34312c;
+  --accent: #e07a58; --accent-ink: #1b1a17; --ok: #6cc28d; --ok-bg: #1d3226; --bad: #f08a7e; --bad-bg: #3a1f1b;
+  --easy: #6cc28d; --medium: #e0b14f; --hard: #f08a7e; --code-bg: #2a2824; --term: #0f0e0d;
+}}
+:root[data-theme="dark"] {
+  --bg: #161513; --panel: #1f1d1a; --ink: #ece7dd; --muted: #a39c8f; --line: #34312c;
+  --accent: #e07a58; --accent-ink: #1b1a17; --ok: #6cc28d; --ok-bg: #1d3226; --bad: #f08a7e; --bad-bg: #3a1f1b;
+  --easy: #6cc28d; --medium: #e0b14f; --hard: #f08a7e; --code-bg: #2a2824; --term: #0f0e0d;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 "IBM Plex Sans", system-ui, sans-serif; }
+a { color: var(--accent); }
+code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+header a.brand { display: flex; align-items: center; gap: 9px; color: var(--ink); text-decoration: none; font: 600 18px "IBM Plex Mono", monospace; }
+header .tag { color: var(--muted); font-size: 13px; }
+header .spacer { flex: 1; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+.hero h1 { font: 600 28px/1.2 "IBM Plex Mono", monospace; margin: 8px 0; }
+.hero p { color: var(--muted); max-width: 640px; margin: 0 0 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 6px; transition: border-color .15s; }
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+.meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
+.pill { border: 1px solid var(--line); border-radius: 99px; padding: 1px 8px; }
+.diff-easy { color: var(--easy); border-color: currentColor; } .diff-medium { color: var(--medium); border-color: currentColor; } .diff-hard { color: var(--hard); border-color: currentColor; }
+.solved { color: var(--ok); font-weight: 600; }
+.play { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; max-width: 1500px; margin: 0 auto; padding: 16px; height: calc(100vh - 60px); }
+.task { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-y: auto; }
+.task h2 { margin: 6px 0 8px; font-size: 22px; }
+.termwrap { background: var(--term); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; min-height: 360px; position: relative; }
+#term { flex: 1; min-height: 0; }
+.idle { position: absolute; inset: 0; display: grid; place-items: center; color: #a39c8f; text-align: center; padding: 20px; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+button { font: 500 14px "IBM Plex Sans", sans-serif; border-radius: 7px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.result { border-radius: 7px; padding: 10px 12px; margin: 10px 0; white-space: pre-wrap; font: 13px "IBM Plex Mono", monospace; }
+.result.ok { background: var(--ok-bg); color: var(--ok); } .result.bad { background: var(--bad-bg); color: var(--bad); }
+details { border-top: 1px solid var(--line); padding: 10px 0; }
+summary { cursor: pointer; font-weight: 600; }
+.hint { margin: 8px 0; padding-left: 10px; border-left: 3px solid var(--accent); }
+.timer { font: 13px "IBM Plex Mono", monospace; color: var(--muted); }
+.back { font-size: 14px; text-decoration: none; }
+@media (max-width: 820px) {
+  header .tag:not(#progress) { display: none; }
+  .play { grid-template-columns: 1fr; height: auto; }
+  .termwrap { height: 70vh; }
+}
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/" data-link>
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="7" rx="11" ry="4" fill="var(--accent)"/><path d="M5 7v18c0 2.2 4.9 4 11 4s11-1.8 11-4V7" fill="none" stroke="var(--accent)" stroke-width="2.5"/><circle cx="12" cy="17" r="1.5" fill="var(--accent)"/><circle cx="20" cy="17" r="1.5" fill="var(--accent)"/><path d="M11.5 23c2.5-2.2 6.5-2.2 9 0" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/></svg>
+    sadDatabase
+  </a>
+  <span class="tag">broken databases, real shells</span>
+  <span class="spacer"></span>
+  <span id="progress" class="tag"></span>
+</header>
+<div id="view"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const md = s => marked.parse(s || '');
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, { headers: { 'content-type': 'application/json' }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || r.statusText);
+  return body;
+};
+let cleanup = () => {};
+
+function go(path) { history.pushState({}, '', path); route(); }
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[data-link]');
+  if (a) { e.preventDefault(); go(a.getAttribute('href')); }
+});
+window.addEventListener('popstate', route);
+
+function progress(list) {
+  const solved = store.get('solved', {});
+  $('#progress').textContent = list ? `${list.filter(s => solved[s.slug]).length} / ${list.length} solved` : '';
+}
+
+async function route() {
+  cleanup(); cleanup = () => {};
+  const m = location.pathname.match(/^\/s\/([\w-]+)/);
+  if (m) return scenarioView(m[1]);
+  return listView();
+}
+
+async function listView() {
+  const list = await api('/api/scenarios');
+  const solved = store.get('solved', {});
+  progress(list);
+  $('#view').innerHTML = `<main>
+    <section class="hero">
+      <h1>Something is wrong with the database.</h1>
+      <p>Each scenario gives you a shell on a disposable box with a broken PostgreSQL server.
+      Find the problem, fix it, and press <b>Check</b>. No setup, no network, nothing to lose.</p>
+    </section>
+    <div class="grid">${list.map(s => `
+      <a class="card" href="/s/${s.slug}" data-link>
+        <div class="meta"><span class="pill diff-${s.difficulty}">${s.difficulty}</span><span>~${s.minutes} min</span><span>${esc(s.engine)}</span>
+          ${solved[s.slug] ? '<span class="solved">✓ solved</span>' : ''}</div>
+        <h3>${esc(s.title)}</h3>
+        <p>${esc(s.summary)}</p>
+        <div class="meta">${s.tags.map(t => `<span>#${esc(t)}</span>`).join('')}</div>
+      </a>`).join('')}
+    </div></main>`;
+}
+
+async function scenarioView(slug) {
+  const [s, list] = await Promise.all([api(`/api/scenarios/${slug}`), api('/api/scenarios')]);
+  progress(list);
+  document.title = `${s.title} · sadDatabase`;
+  let shown = 0;
+  $('#view').innerHTML = `<div class="play">
+    <section class="task">
+      <a class="back" href="/" data-link>← all scenarios</a>
+      <h2>${esc(s.title)}</h2>
+      <div class="meta"><span class="pill diff-${s.difficulty}">${s.difficulty}</span><span>~${s.minutes} min</span><span>${esc(s.engine)}</span><span class="timer" id="timer"></span></div>
+      <div>${md(s.description)}</div>
+      <div class="btns">
+        <button class="primary" id="start">Start scenario</button>
+        <button id="check" disabled>Check my solution</button>
+        <button id="end" disabled>End</button>
+      </div>
+      <div id="result"></div>
+      <details id="hints"><summary>Hints (${s.hints.length})</summary><div id="hintlist"></div><button id="morehint">Show a hint</button></details>
+      <details id="sol"><summary>Solution &amp; lesson</summary><div id="solbody"><button id="showsol">I give up, show me</button></div></details>
+    </section>
+    <section class="termwrap"><div id="term"></div><div class="idle" id="idle">Press <b>&nbsp;Start scenario&nbsp;</b> to get a shell on a fresh, broken box.</div></section>
+  </div>`;
+
+  $('#morehint').onclick = () => {
+    if (shown < s.hints.length) $('#hintlist').insertAdjacentHTML('beforeend', `<div class="hint"><b>${shown + 1}.</b> ${md(s.hints[shown++])}</div>`);
+    if (shown >= s.hints.length) $('#morehint').remove();
+  };
+  $('#showsol').onclick = () => { $('#solbody').innerHTML = md(s.solution); };
+
+  const css = getComputedStyle(document.documentElement);
+  const term = new Terminal({ fontFamily: '"IBM Plex Mono", monospace', fontSize: 14, cursorBlink: true,
+    theme: { background: css.getPropertyValue('--term').trim(), foreground: '#ece7dd', cursor: '#e07a58' } });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  let ws = null, sid = store.get('sessions', {})[slug] || null, timerInt = null;
+  const onResize = () => { try { fit.fit(); } catch {} sendSize(); };
+  const sendSize = () => ws && ws.readyState === 1 && ws.send(`\x00resize:${term.cols}x${term.rows}`);
+  window.addEventListener('resize', onResize);
+  term.onData(d => ws && ws.readyState === 1 && ws.send(new TextEncoder().encode(d)));
+
+  const setSid = v => { sid = v; const all = store.get('sessions', {}); if (v) all[slug] = v; else delete all[slug]; store.set('sessions', all); };
+  const setButtons = live => { $('#start').disabled = live; $('#check').disabled = !live; $('#end').disabled = !live;
+    $('#start').textContent = live ? 'Running' : 'Start scenario'; };
+
+  function startTimer(expires) {
+    clearInterval(timerInt);
+    const tick = () => {
+      const left = Math.max(0, expires - Date.now() / 1000);
+      $('#timer') && ($('#timer').textContent = `⏱ ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')} left`);
+      if (left <= 0) { clearInterval(timerInt); teardown('Session expired.'); }
+    };
+    tick(); timerInt = setInterval(tick, 1000);
+  }
+
+  function connect() {
+    $('#idle').style.display = 'none';
+    if (!term.element) term.open($('#term'));
+    onResize();
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/api/sessions/${sid}/tty`);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { sendSize(); term.focus(); };
+    ws.onmessage = e => term.write(typeof e.data === 'string' ? e.data : new Uint8Array(e.data));
+    ws.onclose = () => { term.write('\r\n\x1b[90m[shell closed — press Enter to reconnect]\x1b[0m\r\n'); };
+  }
+  term.onKey(({ domEvent }) => { if (domEvent.key === 'Enter' && sid && (!ws || ws.readyState > 1)) connect(); });
+
+  async function waitReady() {
+    term.write('\x1b[90mbooting your broken box');
+    for (let i = 0; i < 60; i++) {
+      const st = await api(`/api/sessions/${sid}`);
+      if (st.ready) { term.write(' ✓\x1b[0m\r\n'); return st; }
+      term.write('.'); await new Promise(r => setTimeout(r, 1000));
+    }
+    throw new Error('the box did not come up in time');
+  }
+
+  function teardown(msg) {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    clearInterval(timerInt); setSid(null); setButtons(false);
+    $('#timer') && ($('#timer').textContent = '');
+    if (msg) term.write(`\r\n\x1b[33m${msg}\x1b[0m\r\n`);
+  }
+
+  $('#start').onclick = async () => {
+    $('#start').disabled = true; $('#result').innerHTML = '';
+    try {
+      const st = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ slug }) });
+      setSid(st.id);
+      $('#idle').style.display = 'none'; if (!term.element) term.open($('#term')); onResize(); term.reset();
+      await waitReady();
+      setButtons(true); startTimer(st.expires_at); connect();
+    } catch (e) { $('#start').disabled = false; $('#result').innerHTML = `<div class="result bad">${esc(e.message)}</div>`; }
+  };
+  $('#check').onclick = async () => {
+    $('#check').disabled = true; $('#check').textContent = 'Checking…';
+    try {
+      const r = await api(`/api/sessions/${sid}/check`, { method: 'POST' });
+      $('#result').innerHTML = `<div class="result ${r.passed ? 'ok' : 'bad'}">${r.passed ? '🎉 ' : ''}${esc(r.output)}</div>`;
+      if (r.passed) { const sv = store.get('solved', {}); sv[slug] = Date.now(); store.set('solved', sv); progress(list); }
+    } catch (e) { $('#result').innerHTML = `<div class="result bad">${esc(e.message)}</div>`; }
+    $('#check').disabled = false; $('#check').textContent = 'Check my solution';
+  };
+  $('#end').onclick = async () => { try { await api(`/api/sessions/${sid}`, { method: 'DELETE' }); } catch {} teardown('Session ended. The box is gone.'); };
+
+  if (sid) {   // reconnect to a session that survived a reload
+    try { const st = await api(`/api/sessions/${sid}`); setButtons(true); startTimer(st.expires_at); term.open($('#term')); connect(); }
+    catch { setSid(null); }
+  }
+  cleanup = () => { window.removeEventListener('resize', onResize); clearInterval(timerInt); if (ws) { ws.onclose = null; ws.close(); } term.dispose(); document.title = 'sadDatabase'; };
+}
+
+route();
+</script>
+</body>
+</html>

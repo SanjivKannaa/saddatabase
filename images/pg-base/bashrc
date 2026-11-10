@@ -1,0 +1,5 @@
+export PGDATA=/srv/pgdata PATH=/usr/lib/postgresql/17/bin:$PATH TERM=xterm-256color
+export PAGER='less -SFRX' PSQL_PAGER='less -SFRX'
+export PS1='\[\e[1;35m\]postgres@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]$ '
+alias ll='ls -la'
+if [ -z "$SAD_MOTD_SHOWN" ]; then export SAD_MOTD_SHOWN=1; cat /etc/motd; fi

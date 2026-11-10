@@ -1,0 +1,37 @@
+title = "Locked out"
+difficulty = "medium"
+minutes = 20
+order = 3
+tags = ["postgres", "auth", "pg_hba", "privileges"]
+summary = "The app can't connect to its database. The app config is not yours to change."
+description = """
+After a "security hardening" ticket, the billing app can't use its database.
+The app connects with the URL in `/srv/app/app.env`; you can read it but **must not change it**.
+
+Make this work:
+```
+psql "$(grep DATABASE_URL /srv/app/app.env | cut -d= -f2-)" -c 'select count(*) from accounts'
+```
+
+Rules: no `trust` authentication for host connections. You are the `postgres` OS user and can
+connect as superuser over the local socket with plain `psql`.
+"""
+hints = [
+  "Run the command and read the error. Then run it again after each fix: there are several layers.",
+  "`select * from pg_hba_file_rules;` shows how Postgres parsed `pg_hba.conf`. Rules are matched top-down, first match wins. Reload with `select pg_reload_conf();`.",
+  "Check the role itself: `\\\\du app` and `select rolcanlogin, rolvaliduntil from pg_roles where rolname='app';`",
+  "Connecting is not the same as being allowed to read: `\\\\dp accounts`.",
+]
+solution = """
+Four independent locks, each surfaced by the next error message:
+
+1. **pg_hba.conf**: a `host billing app 127.0.0.1/32 reject` line sits *above* the scram line. First match wins.
+   Delete it, then `select pg_reload_conf();`.
+2. **Role can't log in**: `alter role app login;`
+3. **Password expired**: `alter role app valid until 'infinity';`
+   (Expired passwords give the same "password authentication failed" error as a wrong one. Check the server log.)
+4. **No privilege on the table**: `grant select on accounts to app;` (in database `billing`).
+
+**Lesson:** auth failures are layered: network rule → role attributes → password validity → object privileges.
+The client error is often vague; the server log (`/var/log/postgresql/postgresql.log`) says what really happened.
+"""

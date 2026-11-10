@@ -1,0 +1,41 @@
+title = "Who ate the disk?"
+difficulty = "easy"
+minutes = 10
+order = 1
+tags = ["postgres", "storage", "catalogs"]
+summary = "The disk alert fired. Find the table that is using the most space."
+description = """
+The disk on the `shop` database server is filling up and the on-call channel is asking
+**which table is to blame**.
+
+Find the table in database `shop` that uses the most disk space **in total**:
+heap + indexes + TOAST, in any schema.
+
+Write its name to `/var/lib/postgresql/solution` (your home directory), as `schema.table`
+or just `table`, e.g. `echo public.customers > ~/solution`.
+"""
+hints = [
+  "`psql -d shop`, then `\\\\dt+` is a start, but it only shows schemas on your `search_path`. Try `\\\\dt+ *.*`.",
+  "Heap size is not total size. Compare `pg_relation_size()` with `pg_total_relation_size()`.",
+  "`select oid::regclass, pg_size_pretty(pg_total_relation_size(oid)) from pg_class where relkind='r' and relnamespace::regnamespace::text not in ('pg_catalog','information_schema') order by pg_total_relation_size(oid) desc limit 5;`",
+]
+solution = """
+`\\dt+` only lists `public`, where `audit_log` looks biggest. But there is an `archive` schema,
+and `archive.events` stores large values out of line in its **TOAST** table, which `\\dt+` and
+`pg_relation_size()` don't count.
+
+```sql
+select oid::regclass as table,
+       pg_size_pretty(pg_relation_size(oid))        as heap,
+       pg_size_pretty(pg_total_relation_size(oid))  as total
+from pg_class
+where relkind = 'r'
+  and relnamespace::regnamespace::text not in ('pg_catalog','information_schema')
+order by pg_total_relation_size(oid) desc
+limit 5;
+```
+```
+echo archive.events > ~/solution
+```
+**Lesson:** "table size" means three things (heap, + indexes, + TOAST). Know which one you are quoting.
+"""

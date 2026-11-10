@@ -1,0 +1,6 @@
+[project]
+name = "saddatabase"
+version = "0.1.0"
+description = "Broken databases to fix, in your browser: learn DBA skills by doing."
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "docker>=7.1"]
