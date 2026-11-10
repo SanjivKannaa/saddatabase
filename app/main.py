@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import config, store
+from . import config, scoring, store
 from .auth import current_user, require_user, router as auth_router
 
 SCENARIOS_DIR = config.ROOT / "scenarios"
@@ -53,6 +53,7 @@ def public(meta: dict, full: bool = False) -> dict:
     e = ENGINES[meta["engine"]]
     d = {k: meta.get(k) for k in ("slug", "engine", "title", "difficulty", "minutes", "tags", "summary", "order")}
     d["engine_name"] = f"{e['name']} {e['version']}"
+    d["max_points"] = scoring.max_points(meta["difficulty"])
     if full:
         d["description"] = meta["description"]
         d["hints_total"] = len(meta.get("hints", []))
@@ -62,6 +63,11 @@ def public(meta: dict, full: bool = False) -> dict:
         d["prev"] = track[i - 1]["slug"] if i > 0 else None
         d["position"], d["track_size"] = i + 1, len(track)
     return d
+
+
+def scorer_for(slug: str):
+    m = SCENARIOS[slug]
+    return lambda secs, hints, peeked, checks: scoring.compute(m["difficulty"], m.get("minutes", 15), secs, hints, peeked, checks)
 
 
 def scenario(slug: str) -> dict:
@@ -116,6 +122,9 @@ async def reaper():
 @asynccontextmanager
 async def lifespan(_app):
     store.init()
+    n = store.backfill_scores(SCENARIOS, scorer_for)
+    if n:
+        print(f"scored {n} earlier solves")
     task = asyncio.create_task(reaper())
     yield
     task.cancel()
@@ -135,7 +144,10 @@ def me(request: Request):
     if not u:
         return {"user": None, "google": bool(config.GOOGLE_CLIENT_ID), "dev_login": config.DEV_LOGIN}
     boxes = user_boxes(u["id"])
-    return {"user": u, "active_session": session_info(boxes[0]) if boxes else None}
+    board = store.leaderboard()
+    rank = next((r["rank"] for r in board if r["id"] == u["id"]), None)
+    return {"user": u, "active_session": session_info(boxes[0]) if boxes else None,
+            "points": store.user_points(u["id"]), "rank": rank, "players": len(board)}
 
 
 @app.get("/api/tracks")
@@ -148,8 +160,9 @@ def tracks(request: Request):
         for s in (s for s in SCENARIOS.values() if s["engine"] == key):
             p = prog.get(s["slug"], {})
             items.append(public(s) | {"solved": bool(p.get("first_solved_at")), "attempts": p.get("attempts", 0),
-                                      "best_seconds": p.get("best_seconds")})
-        out.append({"engine": key, **e, "scenarios": items, "solved": sum(i["solved"] for i in items)})
+                                      "best_seconds": p.get("best_seconds"), "points": p.get("best_score")})
+        out.append({"engine": key, **e, "scenarios": items, "solved": sum(i["solved"] for i in items),
+                    "points": sum(i["points"] or 0 for i in items), "max_points": sum(i["max_points"] for i in items)})
     return out
 
 
@@ -164,6 +177,9 @@ def get_scenario(slug: str, request: Request):
     d["solution"] = s["solution"] if p.get("solution_viewed") else None
     d["solved"] = bool(p.get("first_solved_at"))
     d["best_seconds"] = p.get("best_seconds")
+    d["points"] = p.get("best_score")
+    base = scoring.BASE.get(s["difficulty"], 100)
+    d["hint_cost"] = round(base * scoring.HINT_PENALTY)
     return d
 
 
@@ -187,12 +203,22 @@ def my_history(u: dict = Depends(require_user)):
     for r in rows:
         s = SCENARIOS.get(r["slug"])
         r["title"], r["engine"] = (s["title"], s["engine"]) if s else (r["slug"], "?")
+        r.pop("score_detail", None)
     return rows
 
 
 @app.get("/api/leaderboard")
-def leaderboard():
-    return store.leaderboard()
+def leaderboard(engine: str = "all", period: str = "all"):
+    if engine != "all" and engine not in ENGINES:
+        raise HTTPException(404, "no such track")
+    slugs = None if engine == "all" else [s["slug"] for s in SCENARIOS.values() if s["engine"] == engine]
+    since = int(time.time()) - 30 * 86400 if period == "30d" else None
+    return store.leaderboard(slugs, since)
+
+
+@app.get("/api/scoring")
+def scoring_rules():
+    return scoring.RULES | {"max_total": sum(scoring.max_points(s["difficulty"]) for s in SCENARIOS.values())}
 
 
 # ---------------------------------------------------------------- sandboxes
@@ -242,8 +268,9 @@ def check_session(sid: str, u: dict = Depends(require_user)):
     c = find(sid, u)
     r = c.exec_run(["timeout", "90", "/opt/sad/check.sh"], user="root")
     passed = r.exit_code == 0
-    rec = store.record_check(sid, passed)
-    return {"passed": passed, "output": r.output.decode(errors="replace").strip(), "seconds": rec.get("seconds")}
+    rec = store.record_check(sid, passed, scorer_for(c.labels["saddb.slug"]))
+    return {"passed": passed, "output": r.output.decode(errors="replace").strip(), "seconds": rec.get("seconds"),
+            "score": rec.get("score"), "previous_best": rec.get("previous_best")}
 
 
 @app.delete("/api/sessions/{sid}")

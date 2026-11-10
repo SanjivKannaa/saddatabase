@@ -1,4 +1,5 @@
 """SQLite store: users, per-scenario progress and every attempt (one per sandbox session)."""
+import json
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -37,11 +38,22 @@ create index if not exists attempts_user on attempts (user_id, started_at desc);
 """
 
 
+MIGRATIONS = [
+    ("attempts", "score", "alter table attempts add column score integer"),
+    ("attempts", "score_detail", "alter table attempts add column score_detail text"),
+    ("progress", "best_score", "alter table progress add column best_score integer"),
+]
+
+
 def init() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as c:
         c.execute("pragma journal_mode = wal")
         c.executescript(SCHEMA)
+        for table, col, ddl in MIGRATIONS:
+            if col not in [r[1] for r in c.execute(f"pragma table_info({table})")]:
+                c.execute(ddl)
+        c.execute("create index if not exists attempts_solved on attempts (solved_at) where solved_at is not null")
 
 
 @contextmanager
@@ -98,23 +110,48 @@ def open_session_ids() -> list[str]:
         return [r[0] for r in c.execute("select session_id from attempts where ended_at is null")]
 
 
-def record_check(sid: str, passed: bool) -> dict:
-    """Count a check; on the first pass of this attempt, mark it solved and update progress."""
+def record_check(sid: str, passed: bool, scorer=None) -> dict:
+    """Count a check. On the first pass of this attempt, mark it solved, score it and update progress.
+    scorer(seconds, hints, peeked, checks) -> {"total", "parts"}."""
     with db() as c:
         a = c.execute("select * from attempts where session_id=?", (sid,)).fetchone()
         if not a:
             return {}
         c.execute("update attempts set checks = checks + 1 where id=?", (a["id"],))
         if not passed or a["solved_at"]:
-            return {"seconds": (a["solved_at"] - a["started_at"]) if a["solved_at"] else None}
+            return {"seconds": (a["solved_at"] - a["started_at"]) if a["solved_at"] else None,
+                    "score": json.loads(a["score_detail"]) if a["score_detail"] else None}
+        p = c.execute("select * from progress where user_id=? and slug=?", (a["user_id"], a["slug"])).fetchone()
+        prev_best = p["best_score"] if p else None
         t = now()
         secs = t - a["started_at"]
-        c.execute("update attempts set solved_at=? where id=?", (t, a["id"]))
+        sc = scorer(secs, p["hints_revealed"] if p else 0, bool(p and p["solution_viewed"]), a["checks"] + 1) if scorer else {"total": 0, "parts": []}
+        c.execute("update attempts set solved_at=?, score=?, score_detail=? where id=?", (t, sc["total"], json.dumps(sc), a["id"]))
         c.execute("""update progress set solves = solves + 1,
                        first_solved_at = coalesce(first_solved_at, ?),
-                       best_seconds = min(coalesce(best_seconds, ?), ?)
-                     where user_id=? and slug=?""", (t, secs, secs, a["user_id"], a["slug"]))
-        return {"seconds": secs, "first": True}
+                       best_seconds = min(coalesce(best_seconds, ?), ?),
+                       best_score = max(coalesce(best_score, 0), ?)
+                     where user_id=? and slug=?""", (t, secs, secs, sc["total"], a["user_id"], a["slug"]))
+        return {"seconds": secs, "score": sc, "previous_best": prev_best}
+
+
+def backfill_scores(meta: dict, scorer_for) -> int:
+    """Score solved attempts recorded before scoring existed (best effort: uses hints seen so far)."""
+    n = 0
+    with db() as c:
+        rows = c.execute("""select a.*, p.hints_revealed, p.solution_viewed as peeked from attempts a
+                            join progress p on p.user_id = a.user_id and p.slug = a.slug
+                            where a.solved_at is not null and a.score is null""").fetchall()
+        for a in rows:
+            if a["slug"] not in meta:
+                continue
+            sc = scorer_for(a["slug"])(a["solved_at"] - a["started_at"], a["hints_revealed"], bool(a["peeked"]), a["checks"])
+            c.execute("update attempts set score=?, score_detail=? where id=?", (sc["total"], json.dumps(sc), a["id"]))
+            n += 1
+        c.execute("""update progress set best_score = (select max(score) from attempts a
+                       where a.user_id = progress.user_id and a.slug = progress.slug and a.solved_at is not null)
+                     where first_solved_at is not null""")
+    return n
 
 
 def reveal(uid: int, slug: str, hints_total: int, solution: bool = False) -> dict:
@@ -143,18 +180,42 @@ def progress_for(uid: int) -> dict[str, dict]:
 def history(uid: int, limit: int = 50) -> list[dict]:
     with db() as c:
         return [dict(r) for r in c.execute(
-            "select slug, started_at, ended_at, end_reason, checks, hints_used, solution_viewed, solved_at from attempts where user_id=? order by started_at desc limit ?",
+            "select slug, started_at, ended_at, end_reason, checks, hints_used, solution_viewed, solved_at, score, score_detail from attempts where user_id=? order by started_at desc limit ?",
             (uid, limit))]
 
 
-def leaderboard(limit: int = 50) -> list[dict]:
+def leaderboard(slugs: list[str] | None = None, since: int | None = None, limit: int = 100) -> list[dict]:
+    """Rank by points: per user, the best score per scenario (among solves since `since`), summed."""
+    where, args = ["a.solved_at is not null"], []
+    if slugs is not None:
+        where.append(f"a.slug in ({','.join('?' * len(slugs))})")
+        args += slugs
+    if since:
+        where.append("a.solved_at >= ?")
+        args.append(since)
     with db() as c:
-        return [dict(r) for r in c.execute("""
+        rows = c.execute(f"""
+            with best as (
+              select a.user_id, a.slug, max(a.score) as score, min(a.solved_at - a.started_at) as secs,
+                     max(a.solved_at) as last_at
+              from attempts a where {' and '.join(where)} group by a.user_id, a.slug)
             select u.id, u.name, u.picture,
-                   count(p.first_solved_at) as solved,
-                   sum(case when p.first_solved_at is not null and p.solution_viewed = 0 then 1 else 0 end) as solved_clean,
-                   coalesce(sum(p.best_seconds), 0) as total_seconds,
-                   max(p.first_solved_at) as last_solved_at
-            from users u join progress p on p.user_id = u.id
-            group by u.id having solved > 0
-            order by solved_clean desc, solved desc, total_seconds asc limit ?""", (limit,))]
+                   sum(b.score) as points, count(*) as solved,
+                   sum(case when b.score > 0 then 1 else 0 end) as solved_clean,
+                   sum(b.secs) as total_seconds, max(b.last_at) as last_solved_at
+            from best b join users u on u.id = b.user_id
+            group by u.id
+            order by points desc, solved desc, total_seconds asc
+            limit ?""", (*args, limit)).fetchall()
+    out, rank, prev = [], 0, None
+    for i, r in enumerate(rows):
+        key = (r["points"], r["solved"], r["total_seconds"])
+        rank = rank if key == prev else i + 1
+        prev = key
+        out.append(dict(r) | {"rank": rank})
+    return out
+
+
+def user_points(uid: int) -> int:
+    with db() as c:
+        return c.execute("select coalesce(sum(best_score), 0) from progress where user_id=?", (uid,)).fetchone()[0]

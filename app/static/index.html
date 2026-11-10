@@ -88,6 +88,17 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 .stat b { display: block; font: 600 26px "IBM Plex Mono", monospace; }
 .stat span { color: var(--muted); font-size: 13px; }
 .gbtn { background: #fff; color: #1f1f1f; border: 1px solid #dadce0; }
+.pts { font: 600 13px "IBM Plex Mono", monospace; color: var(--accent); }
+.chip { font: 600 13px "IBM Plex Mono", monospace; background: var(--code-bg); border-radius: 99px; padding: 3px 10px; color: var(--ink); text-decoration: none; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 14px; }
+.tabs button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.breakdown { margin: 6px 0 0; font: 13px "IBM Plex Mono", monospace; }
+.breakdown div { display: flex; justify-content: space-between; gap: 12px; }
+.breakdown .sum { border-top: 1px solid currentColor; margin-top: 4px; padding-top: 4px; font-weight: 600; }
+.medal { font-size: 18px; }
+.rules { font-size: 14px; color: var(--muted); }
+.rules li { margin: 3px 0; }
+.note { color: var(--muted); font-size: 13px; margin: 6px 0; }
 .notice { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
 @media (max-width: 820px) {
   .play { grid-template-columns: 1fr; height: auto; }
@@ -139,7 +150,8 @@ window.addEventListener('popstate', route);
 async function loadMe() {
   ME = await api('/api/me');
   $('#who').innerHTML = ME.user
-    ? `<a href="/me" data-link>${ME.user.picture ? `<img src="${esc(ME.user.picture)}" alt="" referrerpolicy="no-referrer">` : ''}<span>${esc(ME.user.name)}</span></a>
+    ? `<a class="chip" href="/leaderboard" data-link title="your points and rank">${ME.points} pts${ME.rank ? ` · #${ME.rank}` : ''}</a>
+       <a href="/me" data-link>${ME.user.picture ? `<img src="${esc(ME.user.picture)}" alt="" referrerpolicy="no-referrer">` : ''}<span>${esc(ME.user.name)}</span></a>
        <button id="logout">Sign out</button>`
     : signInButton();
   const lo = $('#logout');
@@ -148,7 +160,7 @@ async function loadMe() {
 
 async function route() {
   cleanup(); cleanup = () => {}; document.title = 'sadDatabase'; window.scrollTo(0, 0);
-  document.querySelectorAll('header nav a').forEach(a => a.classList.toggle('on', a.getAttribute('href') === location.pathname));
+  document.querySelectorAll('header nav a').forEach(a => a.classList.toggle('on', a.getAttribute('href').split('?')[0] === location.pathname));
   const p = location.pathname;
   let m;
   try {
@@ -172,7 +184,7 @@ async function homeView() {
       <a class="card" href="/t/${t.engine}" data-link>
         <h3><span class="engine-dot" style="background:${t.color}"></span>${esc(t.name)} <span class="meta" style="display:inline">${esc(t.version)}</span></h3>
         <p>${esc(t.blurb)}</p>
-        <div class="meta"><span>${t.scenarios.length} scenarios</span>${ME.user ? `<span>${t.solved} solved</span>` : ''}</div>
+        <div class="meta"><span>${t.scenarios.length} scenarios</span>${ME.user ? `<span>${t.solved} solved</span><span class="pts">${t.points} / ${t.max_points} pts</span>` : `<span>${t.max_points} pts to earn</span>`}</div>
         <div class="bar"><i style="width:${t.scenarios.length ? 100 * t.solved / t.scenarios.length : 0}%"></i></div>
       </a>`).join('')}
     </div></main>`;
@@ -188,13 +200,13 @@ async function trackView(engine) {
     <a class="back" href="/" data-link>← all tracks</a>
     <h1><span class="engine-dot" style="background:${t.color};width:14px;height:14px"></span>${esc(t.name)} ${esc(t.version)}</h1>
     <p class="lead">${esc(t.blurb)} Work through them in order: each builds on habits from the one before.</p>
-    <div style="max-width:420px"><div class="meta" style="margin-bottom:6px">${t.solved} / ${t.scenarios.length} solved</div>
+    <div style="max-width:420px"><div class="meta" style="margin-bottom:6px">${t.solved} / ${t.scenarios.length} solved${ME.user ? ` · <span class="pts">${t.points} / ${t.max_points} pts</span>` : ''} · <a href="/leaderboard?engine=${t.engine}" data-link>track leaderboard</a></div>
       <div class="bar"><i style="width:${100 * t.solved / t.scenarios.length}%"></i></div></div>
     <ol class="flow">${t.scenarios.map((s, i) => `
       <li><div class="step ${s.solved ? 'done' : s.attempts ? 'tried' : ''}">${s.solved ? '✓' : i + 1}</div>
         <a class="card" href="/s/${s.slug}" data-link ${next && next.slug === s.slug ? 'style="border-color:var(--accent)"' : ''}>
           <div class="meta"><span class="pill diff-${s.difficulty}">${s.difficulty}</span><span>~${s.minutes} min</span>
-            ${s.solved ? `<span class="solved">✓ solved · best ${dur(s.best_seconds)}</span>` : s.attempts ? `<span>${s.attempts} attempt${s.attempts > 1 ? 's' : ''}</span>` : ''}
+            ${s.solved ? `<span class="solved">✓ solved · best ${dur(s.best_seconds)}</span><span class="pts">${s.points} / ${s.max_points} pts</span>` : `<span class="pts">up to ${s.max_points} pts</span>${s.attempts ? `<span>${s.attempts} attempt${s.attempts > 1 ? 's' : ''}</span>` : ''}`}
             ${next && next.slug === s.slug ? '<span style="color:var(--accent);font-weight:600">up next</span>' : ''}</div>
           <h3>${esc(s.title)}</h3><p>${esc(s.summary)}</p>
           <div class="meta">${s.tags.map(x => `<span>#${esc(x)}</span>`).join('')}</div>
@@ -211,6 +223,7 @@ async function scenarioView(slug) {
       <a class="back" href="/t/${s.engine}" data-link>← ${esc(s.engine_name)} track · ${s.position} of ${s.track_size}</a>
       <h2>${esc(s.title)}</h2>
       <div class="meta"><span class="pill diff-${s.difficulty}">${s.difficulty}</span><span>~${s.minutes} min</span>
+        <span class="pts">${s.solved ? `your best: ${s.points} / ${s.max_points} pts` : `up to ${s.max_points} pts`}</span>
         ${s.solved ? `<span class="solved">✓ solved · best ${dur(s.best_seconds)}</span>` : ''}<span class="timer" id="timer"></span></div>
       <div>${md(s.description)}</div>
       <div class="btns" id="btns"></div>
@@ -224,14 +237,14 @@ async function scenarioView(slug) {
   const renderHints = hints => {
     $('#hintlist').innerHTML = hints.map((h, i) => `<div class="hint"><b>${i + 1}.</b> ${md(h)}</div>`).join('');
     $('#hints summary').textContent = `Hints (${hints.length}/${s.hints_total})`;
-    $('#hintbtn').innerHTML = !ME.user ? '<p class="meta">Sign in to use hints.</p>'
-      : hints.length < s.hints_total ? '<button id="morehint">Show a hint</button>' : '';
+    $('#hintbtn').innerHTML = !ME.user ? '<p class="note">Sign in to use hints.</p>'
+      : hints.length < s.hints_total ? `<button id="morehint">Show a hint (−${s.hint_cost} pts)</button>` : '';
     const b = $('#morehint');
     if (b) b.onclick = async () => renderHints((await api(`/api/scenarios/${slug}/hint`, { method: 'POST' })).hints);
   };
   const renderSolution = sol => {
-    $('#solbody').innerHTML = sol ? md(sol) : !ME.user ? '<p class="meta">Sign in to see the solution.</p>'
-      : '<p class="meta">Peeking is recorded on your profile (and the leaderboard counts clean solves first).</p><button id="showsol">I give up, show me</button>';
+    $('#solbody').innerHTML = sol ? md(sol) : !ME.user ? '<p class="note">Sign in to see the solution.</p>'
+      : `<p class="note">${s.solved ? 'You already solved this; your points are safe.' : 'Peeking now means this scenario scores <b>0 points</b> when you solve it.'}</p><button id="showsol">I give up, show me</button>`;
     const b = $('#showsol');
     if (b) b.onclick = async () => { renderSolution((await api(`/api/scenarios/${slug}/solution`, { method: 'POST' })).solution); $('#sol').open = true; };
   };
@@ -242,7 +255,7 @@ async function scenarioView(slug) {
     return;
   }
   $('#btns').innerHTML = `<button class="primary" id="start">Start scenario</button><button id="check" disabled>Check my solution</button><button id="end" disabled>End</button>`;
-  $('#idle').innerHTML = 'Press <b>&nbsp;Start scenario&nbsp;</b> to get a shell on a fresh, broken box.';
+  $('#idle').innerHTML = '<div>Press <b>Start scenario</b> to get a shell on a fresh, broken box.</div>';
 
   const css = getComputedStyle(document.documentElement);
   const term = new Terminal({ fontFamily: '"IBM Plex Mono", monospace', fontSize: 14, cursorBlink: true,
@@ -314,9 +327,13 @@ async function scenarioView(slug) {
     $('#check').disabled = true; $('#check').textContent = 'Checking…';
     try {
       const r = await api(`/api/sessions/${sid}/check`, { method: 'POST' });
-      $('#result').innerHTML = `<div class="result ${r.passed ? 'ok' : 'bad'}">${r.passed ? `🎉 Solved in ${dur(r.seconds)}\n` : ''}${esc(r.output)}</div>`
+      const bd = r.passed && r.score ? `<div class="breakdown">${r.score.parts.map(([l, v]) => `<div><span>${esc(l)}</span><span>${v > 0 ? '+' : ''}${v}</span></div>`).join('')}
+          <div class="sum"><span>This solve</span><span>${r.score.total} pts</span></div>
+          ${r.previous_best != null ? `<div><span>Your best for this scenario</span><span>${Math.max(r.previous_best, r.score.total)} pts</span></div>` : ''}</div>` : '';
+      $('#result').innerHTML = `<div class="result ${r.passed ? 'ok' : 'bad'}">${r.passed ? `🎉 Solved in ${dur(r.seconds)}\n` : ''}${esc(r.output)}${bd}</div>`
         + (r.passed && s.next ? `<div class="btns"><a class="btn primary" href="/s/${s.next}" data-link>Next in track →</a></div>` : '')
         + (r.passed && !s.next ? `<div class="btns"><a class="btn primary" href="/t/${s.engine}" data-link>Track complete! Back to track</a></div>` : '');
+      if (r.passed) loadMe();
       if (r.passed && s.next) $('#end').click();
     } catch (e) { showErr(e.message); }
     if ($('#check')) { $('#check').disabled = !sid; $('#check').textContent = 'Check my solution'; }
@@ -339,6 +356,8 @@ async function meView() {
     <div style="display:flex;gap:14px;align-items:center">${ME.user.picture ? `<img src="${esc(ME.user.picture)}" alt="" referrerpolicy="no-referrer" style="width:56px;height:56px;border-radius:50%">` : ''}
       <div><h1 style="margin:0">${esc(ME.user.name)}</h1><div class="meta">${esc(ME.user.email)} · joined ${when(ME.user.created_at)}</div></div></div>
     <div class="stats">
+      <div class="stat"><b>${ME.points}</b><span>points</span></div>
+      <div class="stat"><b>${ME.rank ? '#' + ME.rank : '–'}</b><span>rank${ME.players ? ` of ${ME.players}` : ''}</span></div>
       <div class="stat"><b>${solved.length}/${all.length}</b><span>scenarios solved</span></div>
       <div class="stat"><b>${hist.length}</b><span>boxes started</span></div>
       <div class="stat"><b>${checks}</b><span>checks run</span></div>
@@ -346,27 +365,46 @@ async function meView() {
     </div>
     <div class="grid">${tracks.map(t => `<a class="card" href="/t/${t.engine}" data-link>
       <h3><span class="engine-dot" style="background:${t.color}"></span>${esc(t.name)}</h3>
-      <div class="meta">${t.solved} / ${t.scenarios.length} solved</div><div class="bar"><i style="width:${100 * t.solved / t.scenarios.length}%"></i></div></a>`).join('')}</div>
+      <div class="meta">${t.solved} / ${t.scenarios.length} solved · <span class="pts">${t.points} / ${t.max_points} pts</span></div><div class="bar"><i style="width:${100 * t.solved / t.scenarios.length}%"></i></div></a>`).join('')}</div>
     <h2 style="margin-top:32px">History</h2>
-    ${hist.length ? `<div class="tablewrap"><table><thead><tr><th>Scenario</th><th>Started</th><th>Result</th><th>Time</th><th>Checks</th><th>Hints</th></tr></thead><tbody>
+    ${hist.length ? `<div class="tablewrap"><table><thead><tr><th>Scenario</th><th>Started</th><th>Result</th><th>Time</th><th>Points</th><th>Checks</th><th>Hints</th></tr></thead><tbody>
       ${hist.map(h => `<tr><td><a href="/s/${h.slug}" data-link>${esc(h.title)}</a> <span class="meta" style="display:inline">${esc(h.engine)}</span></td>
         <td>${when(h.started_at)}</td>
         <td>${h.solved_at ? '<span class="solved">✓ solved</span>' : h.ended_at ? (h.end_reason === 'expired' ? 'expired' : 'gave up') : 'in progress'}${h.solution_viewed ? ' · peeked' : ''}</td>
-        <td>${h.solved_at ? dur(h.solved_at - h.started_at) : '–'}</td><td>${h.checks}</td><td>${h.hints_used}</td></tr>`).join('')}
+        <td>${h.solved_at ? dur(h.solved_at - h.started_at) : '–'}</td><td>${h.score != null ? `<span class="pts">${h.score}</span>` : '–'}</td><td>${h.checks}</td><td>${h.hints_used}</td></tr>`).join('')}
     </tbody></table></div>` : '<p class="lead">Nothing yet. <a href="/" data-link>Pick a track</a>.</p>'}
   </main>`;
 }
 
 /* ------------------------------------------------------------------ leaderboard */
 async function leaderboardView() {
-  const rows = await api('/api/leaderboard');
+  const q = new URLSearchParams(location.search);
+  const engine = q.get('engine') || 'all', period = q.get('period') || 'all';
+  const [rows, rules, tracks] = await Promise.all([api(`/api/leaderboard?engine=${engine}&period=${period}`), api('/api/scoring'), api('/api/tracks')]);
+  const set = (k, v) => { const n = new URLSearchParams(location.search); n.set(k, v); go(`/leaderboard?${n}`); };
+  const medal = r => ({ 1: '🥇', 2: '🥈', 3: '🥉' })[r] || r;
+  const B = rules.base;
   $('#view').innerHTML = `<main><h1>Leaderboard</h1>
-    <p class="lead">Ranked by clean solves (without peeking at the solution), then total solves, then the sum of best times.</p>
-    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>#</th><th>Who</th><th>Clean solves</th><th>Solves</th><th>Total best time</th><th>Last solve</th></tr></thead><tbody>
-    ${rows.map((r, i) => `<tr ${ME.user && ME.user.id === r.id ? 'style="font-weight:600"' : ''}><td>${i + 1}</td>
+    <p class="lead">Points from your best solve of each scenario. Fast, clean solves score more; hints cost points; peeking at the solution scores zero.
+      ${rules.max_total} points available in total.</p>
+    <div class="tabs" id="etabs">${[['all', 'All tracks'], ...tracks.map(t => [t.engine, t.name])].map(([k, l]) => `<button data-e="${k}" class="${k === engine ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
+    <div class="tabs" id="ptabs">${[['all', 'All time'], ['30d', 'Last 30 days']].map(([k, l]) => `<button data-p="${k}" class="${k === period ? 'on' : ''}">${l}</button>`).join('')}</div>
+    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>#</th><th>Who</th><th>Points</th><th>Solved</th><th>Clean</th><th>Total best time</th><th>Last solve</th></tr></thead><tbody>
+    ${rows.map(r => `<tr ${ME.user && ME.user.id === r.id ? 'style="font-weight:600;background:var(--code-bg)"' : ''}><td class="medal">${medal(r.rank)}</td>
       <td><span class="who">${r.picture ? `<img src="${esc(r.picture)}" alt="" referrerpolicy="no-referrer">` : ''}${esc(r.name)}</span></td>
-      <td>${r.solved_clean}</td><td>${r.solved}</td><td>${dur(r.total_seconds)}</td><td>${when(r.last_solved_at)}</td></tr>`).join('')}
-    </tbody></table></div>` : '<p class="lead">No solves yet. Be the first.</p>'}</main>`;
+      <td class="pts">${r.points}</td><td>${r.solved}</td><td>${r.solved_clean}</td><td>${dur(r.total_seconds)}</td><td>${when(r.last_solved_at)}</td></tr>`).join('')}
+    </tbody></table></div>` : `<p class="lead">No solves ${period === '30d' ? 'in the last 30 days' : 'yet'}${engine !== 'all' ? ' on this track' : ''}. Be the first.</p>`}
+    <details style="margin-top:24px" open><summary>How scoring works</summary><ul class="rules">
+      <li><b>Base:</b> easy ${B.easy}, medium ${B.medium}, hard ${B.hard}.</li>
+      <li><b>Speed:</b> +${rules.fast_half_pct}% if you solve it in under half the estimated time, +${rules.fast_pct}% within the estimate (from pressing Start).</li>
+      <li><b>Clean:</b> +${rules.first_check_pct}% if your first Check passes.</li>
+      <li><b>Hints:</b> −${rules.hint_penalty_pct}% of base for each hint you've opened on that scenario.</li>
+      <li><b>Solution:</b> view it before solving and the scenario scores 0 (it still counts as solved, not as clean).</li>
+      <li>Every honest solve is worth at least ${rules.floor_pct}% of base. Replays can raise your best score, never lower it.</li>
+      <li>Ties: more solves first, then less total time.</li></ul></details>
+  </main>`;
+  document.querySelectorAll('#etabs button').forEach(b => b.onclick = () => set('engine', b.dataset.e));
+  document.querySelectorAll('#ptabs button').forEach(b => b.onclick = () => set('period', b.dataset.p));
 }
 
 loadMe().then(route);
