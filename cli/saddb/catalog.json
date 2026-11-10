@@ -1,0 +1,416 @@
+{
+ "engines": {
+  "postgres": {
+   "name": "PostgreSQL",
+   "version": "17",
+   "color": "#336791",
+   "blurb": "Startup failures, auth layers, slow plans, locks, sequences and connection limits."
+  },
+  "mysql": {
+   "name": "MySQL",
+   "version": "8.4",
+   "color": "#00758f",
+   "blurb": "Upgrade-broken configs, account and role gotchas, type conversion and metadata locks."
+  },
+  "mongo": {
+   "name": "MongoDB",
+   "version": "7.0",
+   "color": "#13aa52",
+   "blurb": "YAML configs, ESR indexes, authSource confusion and cleaning up duplicates."
+  },
+  "redis": {
+   "name": "Redis",
+   "version": "8",
+   "color": "#d82c20",
+   "blurb": "AOF repair, eviction policies and finding the key that eats memory."
+  }
+ },
+ "scenarios": [
+  {
+   "slug": "pg-biggest-table",
+   "engine": "postgres",
+   "title": "Who ate the disk?",
+   "difficulty": "easy",
+   "minutes": 10,
+   "order": 1,
+   "tags": [
+    "postgres",
+    "storage",
+    "catalogs"
+   ],
+   "summary": "The disk alert fired. Find the table that is using the most space.",
+   "description": "The disk on the `shop` database server is filling up and the on-call channel is asking\n**which table is to blame**.\n\nFind the table in database `shop` that uses the most disk space **in total**:\nheap + indexes + TOAST, in any schema.\n\nWrite its name to `/var/lib/postgresql/solution` (your home directory), as `schema.table`\nor just `table`, e.g. `echo public.customers > ~/solution`.\n",
+   "hints": [
+    "`psql -d shop`, then `\\\\dt+` is a start, but it only shows schemas on your `search_path`. Try `\\\\dt+ *.*`.",
+    "Heap size is not total size. Compare `pg_relation_size()` with `pg_total_relation_size()`.",
+    "`select oid::regclass, pg_size_pretty(pg_total_relation_size(oid)) from pg_class where relkind='r' and relnamespace::regnamespace::text not in ('pg_catalog','information_schema') order by pg_total_relation_size(oid) desc limit 5;`"
+   ],
+   "solution": "`\\dt+` only lists `public`, where `audit_log` looks biggest. But there is an `archive` schema,\nand `archive.events` stores large values out of line in its **TOAST** table, which `\\dt+` and\n`pg_relation_size()` don't count.\n\n```sql\nselect oid::regclass as table,\n       pg_size_pretty(pg_relation_size(oid))        as heap,\n       pg_size_pretty(pg_total_relation_size(oid))  as total\nfrom pg_class\nwhere relkind = 'r'\n  and relnamespace::regnamespace::text not in ('pg_catalog','information_schema')\norder by pg_total_relation_size(oid) desc\nlimit 5;\n```\n```\necho archive.events > ~/solution\n```\n**Lesson:** \"table size\" means three things (heap, + indexes, + TOAST). Know which one you are quoting.\n"
+  },
+  {
+   "slug": "pg-wont-start",
+   "engine": "postgres",
+   "title": "It won't start",
+   "difficulty": "easy",
+   "minutes": 10,
+   "order": 2,
+   "tags": [
+    "postgres",
+    "startup",
+    "config"
+   ],
+   "summary": "After a config change and a restore, Postgres refuses to come up.",
+   "description": "A colleague tuned the server and restored a file-level copy of the data directory over the\nweekend. Now PostgreSQL **won't start**.\n\nGet PostgreSQL running and accepting connections, **without losing data**: database `inventory`\nmust still have its rows. Don't re-`initdb`.\n\nStart it with `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start`.\n",
+   "hints": [
+    "Always read the log first: `tail -n 30 /var/log/postgresql/postgresql.log`.",
+    "There is more than one problem. Fix one, try again, read the log again.",
+    "Postgres is strict about who can read the data directory. Compare `ls -ld $PGDATA` with what the log says is allowed."
+   ],
+   "solution": "Two problems, one at a time, each found in the log.\n\n1. `invalid value for parameter \"shared_buffers\": \"128MBB\"` — a typo in `postgresql.conf`.\n   ```\n   grep -n shared_buffers $PGDATA/postgresql.conf $PGDATA/postgresql.auto.conf\n   ```\n   It was set in **`postgresql.auto.conf`** (written by `ALTER SYSTEM`), which overrides `postgresql.conf`.\n   Fix the unit (`128MB`) or delete that line.\n2. `data directory \"/srv/pgdata\" has invalid permissions` — the restore left it `0755`.\n   ```\n   chmod 700 $PGDATA\n   ```\nThen `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start` and `psql -d inventory -c 'select count(*) from items'`.\n\n**Lesson:** read the log, fix one thing at a time, and remember `postgresql.auto.conf` wins over `postgresql.conf`.\n"
+  },
+  {
+   "slug": "pg-locked-out",
+   "engine": "postgres",
+   "title": "Locked out",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 3,
+   "tags": [
+    "postgres",
+    "auth",
+    "pg_hba",
+    "privileges"
+   ],
+   "summary": "The app can't connect to its database. The app config is not yours to change.",
+   "description": "After a \"security hardening\" ticket, the billing app can't use its database.\nThe app connects with the URL in `/srv/app/app.env`; you can read it but **must not change it**.\n\nMake this work:\n```\npsql \"$(grep DATABASE_URL /srv/app/app.env | cut -d= -f2-)\" -c 'select count(*) from accounts'\n```\n\nRules: no `trust` authentication for host connections. You are the `postgres` OS user and can\nconnect as superuser over the local socket with plain `psql`.\n",
+   "hints": [
+    "Run the command and read the error. Then run it again after each fix: there are several layers.",
+    "`select * from pg_hba_file_rules;` shows how Postgres parsed `pg_hba.conf`. Rules are matched top-down, first match wins. Reload with `select pg_reload_conf();`.",
+    "Check the role itself: `\\\\du app` and `select rolcanlogin, rolvaliduntil from pg_roles where rolname='app';`",
+    "Connecting is not the same as being allowed to read: `\\\\dp accounts`."
+   ],
+   "solution": "Four independent locks, each surfaced by the next error message:\n\n1. **pg_hba.conf**: a `host billing app 127.0.0.1/32 reject` line sits *above* the scram line. First match wins.\n   Delete it, then `select pg_reload_conf();`.\n2. **Role can't log in**: `alter role app login;`\n3. **Password expired**: `alter role app valid until 'infinity';`\n   (Expired passwords give the same \"password authentication failed\" error as a wrong one. Check the server log.)\n4. **No privilege on the table**: `grant select on accounts to app;` (in database `billing`).\n\n**Lesson:** auth failures are layered: network rule → role attributes → password validity → object privileges.\nThe client error is often vague; the server log (`/var/log/postgresql/postgresql.log`) says what really happened.\n"
+  },
+  {
+   "slug": "pg-slow-query",
+   "engine": "postgres",
+   "title": "The slow dashboard",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 4,
+   "tags": [
+    "postgres",
+    "indexes",
+    "explain"
+   ],
+   "summary": "A customer page query got slow, even though 'there is an index for that'.",
+   "description": "The \"my recent pending orders\" page is timing out. The query (database `shop`):\n\n```sql\nselect * from orders\nwhere customer_id = 4242 and status = 'pending'\norder by created_at desc\nlimit 20;\n```\n\nThe team swears there is an index on `customer_id`. Make this query run in **under 5 ms**\n(execution time, for any customer) and stop it from scanning the whole table.\n",
+   "hints": [
+    "Start with `explain (analyze, buffers)` on the query.",
+    "Look carefully at `\\\\d orders`. Is every index usable?",
+    "An index that matches the WHERE *and* the ORDER BY lets Postgres stop after 20 rows."
+   ],
+   "solution": "`\\d orders` shows `orders_customer_id_idx ... INVALID`: a `CREATE INDEX CONCURRENTLY` failed\nhalf-way and left an index the planner will never use (but every write still maintains it).\nThe only other index, on `status`, isn't selective enough, so Postgres reads ~1/4 of the table.\n\nFix: drop the broken index and build one that serves the whole query:\n```sql\ndrop index orders_customer_id_idx;\ncreate index concurrently orders_cust_status_created_idx\n  on orders (customer_id, status, created_at desc);\n```\n(`reindex index concurrently orders_customer_id_idx;` would also make the old one valid, and\nwork, but the composite index avoids the sort too.)\n\n**Lesson:** check for invalid indexes after any failed concurrent build:\n`select indexrelid::regclass from pg_index where not indisvalid;`\n"
+  },
+  {
+   "slug": "pg-blocked-checkout",
+   "engine": "postgres",
+   "title": "Checkout is frozen",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 5,
+   "tags": [
+    "postgres",
+    "locks",
+    "pg_stat_activity"
+   ],
+   "summary": "Every update to one product hangs forever. Find the culprit and make sure it can't happen again.",
+   "description": "Customers can't buy SKU `A-100`: the checkout request hangs. This hangs too (database `store`):\n\n```sql\nupdate inventory set qty = qty - 1 where sku = 'A-100';\n```\n\n1. Get updates to `A-100` working again (without restarting PostgreSQL).\n2. Make sure a session from the **`reporting`** role can never again hold locks\n   by sitting idle inside a transaction for more than **60 seconds**.\n",
+   "hints": [
+    "Who is connected and what are they doing? `select pid, usename, application_name, state, wait_event_type, now()-xact_start as xact_age, query from pg_stat_activity where datname='store';`",
+    "`pg_blocking_pids(pid)` tells you who blocks whom.",
+    "`pg_terminate_backend(pid)` ends a session. For part 2, look at `idle_in_transaction_session_timeout`, which can be set per role."
+   ],
+   "solution": "`pg_stat_activity` shows a `nightly_report` session (role `reporting`) in state\n**idle in transaction** for ages: it updated `A-100` and never committed, so it holds the row lock.\nOther updates queue up behind it (`wait_event_type = Lock`).\n\n```sql\nselect pid, usename, application_name, state, pg_blocking_pids(pid) as blocked_by, query\nfrom pg_stat_activity where datname = 'store';\n\nselect pg_terminate_backend(pid) from pg_stat_activity\nwhere application_name = 'nightly_report';\n```\nPrevent it from coming back:\n```sql\nalter role reporting set idle_in_transaction_session_timeout = '60s';\n```\n(or `alter system set ...` + `select pg_reload_conf();` for everyone).\n\n**Lesson:** \"idle in transaction\" sessions hold locks and block vacuum. Always set a timeout.\n"
+  },
+  {
+   "slug": "pg-id-overflow",
+   "engine": "postgres",
+   "title": "Two billion events",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 6,
+   "tags": [
+    "postgres",
+    "sequences",
+    "data types",
+    "ddl"
+   ],
+   "summary": "Inserts started failing overnight. The table didn't get any bigger. What happened?",
+   "description": "Since 03:12 every insert into `events` (database `tracking`) fails:\n\n```sql\ninsert into events (kind, payload) values ('click', '{}') returning id;\n```\n\nFix it so inserts work again **for years to come**, including tagging new events in\n`event_tags`. Keep every existing row.\n",
+   "hints": [
+    "Read the error carefully. Then `\\\\d events` and `\\\\d events_id_seq`.",
+    "`serial` means `integer`, and integers stop at 2,147,483,647. Both the column and the sequence have a type.",
+    "Who else stores event ids? Look for foreign keys: `\\\\d event_tags`."
+   ],
+   "solution": "`events.id` is a `serial`: an `integer` column fed by an `integer` sequence, and the sequence hit\n2147483647 (`nextval: reached maximum value of sequence`). Rows were inserted with big gaps, so the\ntable is small but the ids ran out.\n\nWiden everything that holds an event id:\n```sql\nalter table events alter column id type bigint;\nalter sequence events_id_seq as bigint;          -- max becomes 9223372036854775807\nalter table event_tags alter column event_id type bigint;\n```\nRestarting the sequence at 1 is **not** a fix: you'd hit the same wall (and the old ids) again.\n\n**Lesson:** use `bigint` / `bigserial` (or `bigint generated always as identity`) for ids.\nOn a big production table, `alter column type` rewrites the table under an exclusive lock, so plan for it\n(new column + backfill, or a tool like pg-osc). Monitor sequence headroom:\n`select seqrelid::regclass, last_value from pg_sequences ...`.\n"
+  },
+  {
+   "slug": "pg-too-many-connections",
+   "engine": "postgres",
+   "title": "Sorry, too many clients",
+   "difficulty": "hard",
+   "minutes": 20,
+   "order": 7,
+   "tags": [
+    "postgres",
+    "connections",
+    "roles"
+   ],
+   "summary": "The app can't get a connection. A misbehaving service is hogging all of them.",
+   "description": "The `web` app (role `web`, password `w3b`) fails to connect to database `app`:\n\n```\nPGPASSWORD=w3b psql -h 127.0.0.1 -U web app -c 'select 1'\n```\n\n1. Get `web` connected again without restarting PostgreSQL.\n2. Make sure the **`metrics`** role can never take more than **5** connections again,\n   so it can't starve everyone else.\n",
+   "hints": [
+    "You (superuser) can still get in, because some slots are reserved for superusers. Who holds the others? `select usename, application_name, state, count(*) from pg_stat_activity group by 1,2,3;`",
+    "Free the slots with `pg_terminate_backend()`.",
+    "Limits can be set per role: look at `alter role ... connection limit`."
+   ],
+   "solution": "`max_connections` is 15 and 3 slots are reserved for superusers, so 12 are usable, and a leaky\n`metrics-collector` holds all 12, idle. Hence `FATAL: remaining connection slots are reserved...`.\n\n```sql\nselect pg_terminate_backend(pid) from pg_stat_activity where usename = 'metrics';\nalter role metrics connection limit 5;\n```\nAlso worth doing: `alter role metrics set idle_session_timeout = '5min';` and, in real life,\na connection pooler (PgBouncer) in front of chatty apps.\n\n**Lesson:** `superuser_reserved_connections` is your emergency door; per-role connection limits keep\none tenant from starving the rest.\n"
+  },
+  {
+   "slug": "mysql-wont-start",
+   "engine": "mysql",
+   "title": "Migrated config, dead server",
+   "difficulty": "easy",
+   "minutes": 10,
+   "order": 1,
+   "tags": [
+    "mysql",
+    "startup",
+    "config"
+   ],
+   "summary": "Someone copied the my.cnf tuning from the old 5.7 box. MySQL 8.4 won't start.",
+   "description": "During the upgrade from MySQL 5.7, an engineer copied the old tuning file to\n`/etc/mysql/conf.d/`. Now **mysqld won't start**.\n\nGet MySQL running with database `inventory` intact (table `items` must still have its 5000 rows).\nStart it with `dbctl start`.\n",
+   "hints": [
+    "`dbctl start` and read what it says. If it says little, look for the error log path in the config.",
+    "Where is mysqld trying to write its error log? Does that directory exist, and can you create it?",
+    "Some server variables were **removed** in MySQL 8.0. An unknown variable stops the server cold."
+   ],
+   "solution": "Two problems in `/etc/mysql/conf.d/legacy-tuning.cnf`:\n\n1. `log-error = /var/log/mysql-legacy/error.log`: that directory doesn't exist and you can't create it\n   under `/var/log`, so mysqld can't even open its log and dies printing to the terminal.\n   Delete the line (the main config already logs to `/var/log/mysql/error.log`).\n2. `query_cache_size` / `query_cache_type`: the query cache was **removed in MySQL 8.0**;\n   `unknown variable 'query_cache_size=64M'` aborts startup. Delete both lines.\n\n```\nnano /etc/mysql/conf.d/legacy-tuning.cnf\ndbctl start\nmysql -e 'select count(*) from inventory.items'\n```\n**Lesson:** after a major upgrade, diff your config against the removed-variables list, and\n`mysqld --validate-config` checks a config without starting the server.\n"
+  },
+  {
+   "slug": "mysql-locked-out",
+   "engine": "mysql",
+   "title": "Access denied, but why?",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 2,
+   "tags": [
+    "mysql",
+    "accounts",
+    "roles"
+   ],
+   "summary": "The billing app's account exists and the password is right. It still can't read its data.",
+   "description": "The billing app connects like this, and the config is **not yours to change**:\n\n```\nmysql -h 127.0.0.1 -u app -p'S4fe-pass' billing -e 'select count(*) from accounts'\n```\n\nMake that command work. Don't hand `app` any global privileges: it should only be able\nto read the `billing` database.\n",
+   "hints": [
+    "Run the command and read the error. Then run it again after every fix: there is more than one layer.",
+    "`select user, host, account_locked, password_expired from mysql.user where user='app';`",
+    "`show grants for 'app'@'%';` What does `select current_role();` say when you're logged in as app?"
+   ],
+   "solution": "Three layers:\n\n1. **Account locked** (`ERROR 3118 ... Account is locked`): `alter user 'app'@'%' account unlock;`\n2. **Password expired** (`ERROR 1820 ... You must reset your password`): an expired password can\n   only be cleared by setting it again. Keep the value the app uses:\n   `alter user 'app'@'%' identified by 'S4fe-pass';`\n   (`password expire never` changes the *policy*, not the flag that is already set.)\n3. **Role not active** (`SELECT command denied`): the privileges come from role `billing_reader`, which was\n   granted to `app` but is not a **default role**, so it's inactive after login.\n   `set default role billing_reader to 'app'@'%';`\n   (or set `activate_all_roles_on_login = ON` server-wide.)\n\n**Lesson:** MySQL 8 roles must be *active* to count. `show grants` lists the role, `current_role()` tells the truth.\n"
+  },
+  {
+   "slug": "mysql-slow-query",
+   "engine": "mysql",
+   "title": "The index that isn't used",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 3,
+   "tags": [
+    "mysql",
+    "indexes",
+    "explain",
+    "types"
+   ],
+   "summary": "There is an index on the column. EXPLAIN says it's not used. The query can't change.",
+   "description": "This query from the order-history page (database `shop`) takes far too long, and it's\ncompiled into a mobile app, so **you can't change it**:\n\n```sql\nSELECT * FROM orders WHERE customer_ref = 4242 ORDER BY created_at DESC LIMIT 20;\n```\n\nThere's an index on `customer_ref`. Make the query use an index and examine only a handful of\nrows, for any customer. Keep all 400,000 orders.\n",
+   "hints": [
+    "`EXPLAIN` the query. Look at `type`, `possible_keys`, `key` and `rows`.",
+    "Compare the literal in the WHERE clause with the column's type: `show create table orders\\\\G`.",
+    "When MySQL compares a string column to a number, it converts every row's value to a number first."
+   ],
+   "solution": "`customer_ref` is a `VARCHAR`, but the query compares it to the **number** `4242`. MySQL then\nconverts each row's string to a number (`'04242'`, `'4242 '` and `'4242'` all equal 4242), so it\ncan't use the index: `type: ALL`, ~400k rows.\n\nSince every value is numeric, store it as a number:\n```sql\nALTER TABLE orders MODIFY customer_ref INT UNSIGNED NOT NULL;\n-- better still, let the index also serve the ORDER BY:\nALTER TABLE orders ADD INDEX idx_cust_created (customer_ref, created_at);\n```\n`EXPLAIN` now shows `type: ref`, `key: idx_cust_created`, ~40 rows.\n\n**Lesson:** implicit type conversion silently disables indexes. Match column types to how they're queried\n(also in JOINs: `INT` vs `VARCHAR`, different collations).\n"
+  },
+  {
+   "slug": "mysql-metadata-lock",
+   "engine": "mysql",
+   "title": "The migration that froze the site",
+   "difficulty": "hard",
+   "minutes": 20,
+   "order": 4,
+   "tags": [
+    "mysql",
+    "locks",
+    "metadata locks",
+    "processlist"
+   ],
+   "summary": "A tiny ALTER TABLE was deployed. Now every query on that table hangs.",
+   "description": "A deploy ran a harmless-looking migration on database `shop`:\n\n```sql\nALTER TABLE products ADD COLUMN discount_pct INT NOT NULL DEFAULT 0;\n```\n\nSince then the product pages hang: even `SELECT * FROM products WHERE id = 1` never returns.\n\nUnblock the site **without restarting mysqld**. The migration must finish: `discount_pct` must exist.\n",
+   "hints": [
+    "`show processlist;` What are the threads waiting for? Which one is the ALTER?",
+    "The ALTER is waiting too. For whom? Look at `sys.schema_table_lock_waits` or `performance_schema.metadata_locks`.",
+    "A transaction that is *open but idle* holds its locks forever. `information_schema.innodb_trx` shows open transactions and their thread ids."
+   ],
+   "solution": "`SHOW PROCESSLIST` shows the `ALTER` and every `SELECT` in state **Waiting for table metadata lock**.\n\nThe ALTER needs an exclusive metadata lock (MDL) on `products`. A `reporting` session ran\n`BEGIN; SELECT ... FROM products` and went idle **without committing**, so it holds a shared MDL. The ALTER\nqueues behind it, and every new query queues behind the ALTER.\n\n```sql\nselect * from sys.schema_table_lock_waits\\G         -- blocking_pid / sql_kill_blocking_connection\nselect trx_mysql_thread_id, trx_started from information_schema.innodb_trx;\nKILL <thread id of the idle reporting session>;\n```\nThe ALTER completes instantly and the SELECTs drain.\n\n**Lesson:** run migrations with a short `lock_wait_timeout` (e.g. `SET SESSION lock_wait_timeout = 5`) and retry,\nso a migration fails fast instead of freezing the site. Hunt down idle open transactions.\n"
+  },
+  {
+   "slug": "mongo-wont-start",
+   "engine": "mongo",
+   "title": "mongod refuses to fork",
+   "difficulty": "easy",
+   "minutes": 10,
+   "order": 1,
+   "tags": [
+    "mongodb",
+    "startup",
+    "config",
+    "yaml"
+   ],
+   "summary": "A config edit over the weekend and now mongod won't come up.",
+   "description": "Someone \"cleaned up\" `/etc/mongodb/mongod.conf` and now **mongod won't start**.\n\nGet it running with all data intact: database `inventory`, collection `items`, 5000 documents.\nStart it with `dbctl start`.\n",
+   "hints": [
+    "`dbctl start` prints mongod's complaint. Fix one thing, then try again.",
+    "YAML is picky about indentation. `cat -A /etc/mongodb/mongod.conf` shows tabs as `^I`.",
+    "Where is the data actually? `ls /srv`. Pointing mongod at an empty directory would start it, with no data."
+   ],
+   "solution": "Two problems in `/etc/mongodb/mongod.conf`:\n\n1. A **tab** used for indentation (`cat -A` shows `^I`). YAML forbids tabs, so mongod can't parse the file.\n   Replace it with spaces.\n2. `dbPath: /srv/mongodb`, but the data lives in **`/srv/mongo`**. Fix the path.\n   (Creating an empty directory would start a server with *no data*, which is worse than a server that's down.)\n\n```\ncat -A /etc/mongodb/mongod.conf | grep -n '\\^I'\nnano /etc/mongodb/mongod.conf\ndbctl start\nmongosh --quiet inventory --eval 'db.items.countDocuments()'\n```\n**Lesson:** read the startup error, and never \"fix\" a missing data dir by creating an empty one.\n"
+  },
+  {
+   "slug": "mongo-slow-query",
+   "engine": "mongo",
+   "title": "COLLSCAN on the hot path",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 2,
+   "tags": [
+    "mongodb",
+    "indexes",
+    "explain"
+   ],
+   "summary": "The 'my pending orders' query reads the whole collection and sorts in memory.",
+   "description": "The orders page runs this (database `shop`):\n\n```js\ndb.orders.find({ customerId: 4242, status: \"pending\" }).sort({ createdAt: -1 }).limit(20)\n```\n\nMake it examine **at most 50 documents** and avoid an in-memory sort, for any customer.\n",
+   "hints": [
+    "`.explain(\"executionStats\")` on the query: look at `winningPlan` stages and `totalDocsExamined`.",
+    "Which indexes exist? `db.orders.getIndexes()`. Does any of them start with `customerId`?",
+    "The ESR rule: put **E**quality fields first, then the **S**ort field, then **R**ange fields."
+   ],
+   "solution": "The only indexes are on `status` and `createdAt`, so MongoDB either scans every `pending` order or walks\nthe whole `createdAt` index. Thousands of documents for 20 results, and possibly a blocking `SORT` stage.\n\nBuild an index that follows **ESR** (Equality, Sort, Range):\n```js\ndb.orders.createIndex({ customerId: 1, status: 1, createdAt: -1 })\n```\nNow the plan is `IXSCAN → FETCH → LIMIT`, no `SORT`, and `totalDocsExamined` is ≤ 20.\n\n**Lesson:** an index that matches both the filter and the sort lets the database stop early.\n"
+  },
+  {
+   "slug": "mongo-auth",
+   "engine": "mongo",
+   "title": "Authentication failed (but the user exists!)",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 3,
+   "tags": [
+    "mongodb",
+    "auth",
+    "roles"
+   ],
+   "summary": "Access control was switched on. The app's user is there, the password is right, and it can't log in.",
+   "description": "Access control is now enabled on this server. The shop app uses the connection string in\n`/srv/app/app.env`, which you can read but **must not change**:\n\n```\nmongosh \"$(cut -d= -f2- /srv/app/app.env)\" --eval 'db.orders.insertOne({sku: \"X\"}); db.orders.countDocuments()'\n```\n\nMake that work. Your admin login is in `~/admin.txt`. Rules: keep access control on, and give `app`\nonly what it needs in `shop`, nothing cluster-wide.\n",
+   "hints": [
+    "Look at the connection string carefully, especially `authSource`.",
+    "Users live in a database. `use admin; db.getUsers()` then `use shop; db.getUsers()`.",
+    "Reading isn't writing: compare the app's roles with what the command does."
+   ],
+   "solution": "`app` was created in the **`admin`** database, but the app authenticates with `authSource=shop`,\nso MongoDB looks for `app` in `shop` and finds nothing (`Authentication failed`). And its role was\n`read`, while the app also inserts.\n\n```js\n// mongosh -u admin -p '...' --authenticationDatabase admin\nuse shop\ndb.createUser({ user: \"app\", pwd: \"Ap9-pass-2024\", roles: [{ role: \"readWrite\", db: \"shop\" }] })\nuse admin\ndb.dropUser(\"app\")      // tidy up the stray one\n```\n**Lesson:** a MongoDB user is identified by *name + authentication database*. `authSource` must point at the\ndatabase where the user was created.\n"
+  },
+  {
+   "slug": "mongo-duplicates",
+   "engine": "mongo",
+   "title": "Two Bobs, one email",
+   "difficulty": "hard",
+   "minutes": 25,
+   "order": 4,
+   "tags": [
+    "mongodb",
+    "data cleanup",
+    "unique index",
+    "aggregation"
+   ],
+   "summary": "Signup let duplicate emails in. Clean them up and make it impossible from now on.",
+   "description": "Signup has a race condition, and collection `users` (database `app`) now has duplicate accounts.\nEmails are **case-insensitive**: `Bob@Example.com` and `bob@example.com` are the same person.\n\n1. For every email, keep only the **most recently updated** document (`updatedAt`) and delete the others.\n2. Make the database itself reject a duplicate email from now on, in any letter case.\n",
+   "hints": [
+    "Find duplicates with an aggregation: `$group` on `{ $toLower: \"$email\" }` and count.",
+    "Sort by `updatedAt` descending inside each group (`$sort` before `$group`, then `$push` the `_id`s): keep the first, delete the rest.",
+    "A unique index enforces uniqueness. For case-insensitivity: either store emails lower-cased, or give the index a collation with `strength: 2`."
+   ],
+   "solution": "```js\nuse app\nconst dups = db.users.aggregate([\n  { $sort: { updatedAt: -1 } },\n  { $group: { _id: { $toLower: \"$email\" }, ids: { $push: \"$_id\" }, n: { $sum: 1 } } },\n  { $match: { n: { $gt: 1 } } }\n]).toArray();\nlet gone = 0;\ndups.forEach(d => gone += db.users.deleteMany({ _id: { $in: d.ids.slice(1) } }).deletedCount);\ngone\n\n// Option A: unique, case-insensitive index (collation strength 2 ignores case)\ndb.users.createIndex({ email: 1 }, { unique: true, collation: { locale: \"en\", strength: 2 } })\n// Option B: normalise, then a plain unique index\n// db.users.updateMany({}, [{ $set: { email: { $toLower: \"$email\" } } }]); db.users.createIndex({ email: 1 }, { unique: true })\n```\n**Lesson:** an application-level \"check, then insert\" is a race. Uniqueness belongs in the database, as an index.\nNote that queries only use a collation index when they specify the same collation.\n"
+  },
+  {
+   "slug": "redis-aof-corrupt",
+   "engine": "redis",
+   "title": "Bad file format reading the append only file",
+   "difficulty": "easy",
+   "minutes": 15,
+   "order": 1,
+   "tags": [
+    "redis",
+    "persistence",
+    "aof"
+   ],
+   "summary": "The box lost power mid-write. Redis now refuses to load its AOF.",
+   "description": "The host crashed while Redis was writing, and now **Redis won't start**.\n\nGet Redis running again with **append-only persistence still on**, keeping as much data as possible\n(there were 10,000 `key:*` keys; losing a few of the last writes is acceptable).\nStart it with `dbctl start`.\n",
+   "hints": [
+    "`dbctl start`, then read the end of `/var/log/redis/redis.log`. It tells you exactly what to run.",
+    "Since Redis 7 the AOF is a directory: `ls -la /srv/redis/appendonlydir/`. There's a manifest, a base file and an incremental file.",
+    "`redis-check-aof` can repair it. Back up the directory first: `cp -a /srv/redis/appendonlydir ~/aof-backup`."
+   ],
+   "solution": "The log says: `Bad file format reading the append only file appendonly.aof.1.incr.aof`.\nThe AOF has garbage in it, so Redis stops rather than load a possibly wrong dataset.\n\n```\ncp -a /srv/redis/appendonlydir ~/aof-backup      # always keep the original\nredis-check-aof --fix /srv/redis/appendonlydir/appendonly.aof.manifest\ndbctl start\nredis-cli dbsize                                 # ~9,950 of 10,000\n```\n`--fix` truncates the file at the first bad command, so everything after it is lost. Disabling\n`appendonly` would also \"start\" Redis, but with an empty or stale dataset.\n\n**Lesson:** `aof-load-truncated yes` (the default) only handles a cut-off *last* command; corruption in\nthe middle needs `redis-check-aof`. Back up before you repair.\n"
+  },
+  {
+   "slug": "redis-oom",
+   "engine": "redis",
+   "title": "OOM command not allowed",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 2,
+   "tags": [
+    "redis",
+    "memory",
+    "eviction",
+    "config"
+   ],
+   "summary": "The cache is full, and instead of forgetting old entries it rejects every write.",
+   "description": "This Redis is a **cache** for the product catalogue. Since this morning every write fails:\n\n```\nredis-cli set cache:product:1 '{\"name\":\"lamp\"}'\n(error) OOM command not allowed when used memory > 'maxmemory'.\n```\n\n1. Make writes work again. Keep a memory limit: this box has 512 MB and Redis must stay under 200 MB.\n2. Make sure a full cache can't block writes again, **and that your fix survives a Redis restart**.\n",
+   "hints": [
+    "`redis-cli info memory`: compare `used_memory_human`, `maxmemory_human` and `maxmemory_policy`.",
+    "What should a *cache* do when it's full? Read about `maxmemory-policy`. Do the cache keys have TTLs? (`redis-cli ttl cache:product:1`)",
+    "`CONFIG SET` only changes the running server. `CONFIG REWRITE` (or editing `/etc/redis/redis.conf`) makes it stick."
+   ],
+   "solution": "`maxmemory` is 40 MB with `maxmemory-policy noeviction`, and the cache holds more than that. With\n`noeviction`, Redis refuses writes when full instead of dropping old data.\n\nFor a cache, evict the least recently used keys. The `cache:*` keys have **no TTL**, so `volatile-lru`\n(which only evicts keys that have a TTL) wouldn't help: use `allkeys-lru` (or `allkeys-lfu`).\n\n```\nredis-cli config set maxmemory-policy allkeys-lru\nredis-cli config rewrite        # persist to /etc/redis/redis.conf\nredis-cli set cache:product:1 '{\"name\":\"lamp\"}'\n```\n**Lesson:** `noeviction` suits a primary datastore and `allkeys-*` suits a cache. Know which one your Redis is.\nSetting `maxmemory 0` would \"work\" until the kernel's OOM killer arrives.\n"
+  },
+  {
+   "slug": "redis-bigkey",
+   "engine": "redis",
+   "title": "Which key ate the RAM?",
+   "difficulty": "easy",
+   "minutes": 10,
+   "order": 3,
+   "tags": [
+    "redis",
+    "memory",
+    "keys"
+   ],
+   "summary": "Memory jumped overnight. Find the single key using the most memory, without KEYS *.",
+   "description": "`used_memory` on the session store jumped overnight. Find the **one key that uses the most memory**\nand write its name to `~/solution`:\n\n```\necho 'the:key:name' > ~/solution\n```\n\nIt's a production box in spirit: don't run `KEYS *` (it blocks the server). `SCAN` is fine.\n",
+   "hints": [
+    "`redis-cli --bigkeys` is a start, but it ranks by *number of elements* per type, not bytes.",
+    "`MEMORY USAGE <key>` gives bytes. `redis-cli --memkeys` scans with it for you.",
+    "The key with the most items is not necessarily the one using the most memory."
+   ],
+   "solution": "`redis-cli --bigkeys` reports `queue:emails` (a list with 200,000 items) as the \"biggest\" list, which looks guilty.\nBut it's 200k *tiny* strings. Measure bytes instead:\n\n```\nredis-cli --memkeys            # samples every key with MEMORY USAGE\nredis-cli memory usage user:avatars\nredis-cli memory usage queue:emails\necho user:avatars > ~/solution\n```\n`user:avatars` is a hash of 1,500 inline images of ~4 KB each, about 6 MB.\n\n**Lesson:** element count ≠ memory. `--memkeys` / `MEMORY USAGE` measure bytes, and `SCAN`-based tools\ndon't block the server the way `KEYS *` does.\n"
+  }
+ ]
+}

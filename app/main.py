@@ -3,7 +3,6 @@ import asyncio
 import secrets
 import threading
 import time
-import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,36 +15,11 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import config, scoring, store
+from .catalog import ENGINES, load_scenarios
 from .auth import current_user, require_user, router as auth_router
 
-SCENARIOS_DIR = config.ROOT / "scenarios"
 STATIC = Path(__file__).resolve().parent / "static"
 LABEL = "saddb.session"
-
-ENGINES = {
-    "postgres": {"name": "PostgreSQL", "version": "17", "color": "#336791",
-                 "blurb": "Startup failures, auth layers, slow plans, locks, sequences and connection limits."},
-    "mysql": {"name": "MySQL", "version": "8.4", "color": "#00758f",
-              "blurb": "Upgrade-broken configs, account and role gotchas, type conversion and metadata locks."},
-    "mongo": {"name": "MongoDB", "version": "7.0", "color": "#13aa52",
-              "blurb": "YAML configs, ESR indexes, authSource confusion and cleaning up duplicates."},
-    "redis": {"name": "Redis", "version": "8", "color": "#d82c20",
-              "blurb": "AOF repair, eviction policies and finding the key that eats memory."},
-}
-
-dk = docker.from_env()
-
-
-def load_scenarios() -> dict[str, dict]:
-    out = {}
-    for f in SCENARIOS_DIR.glob("*/scenario.toml"):
-        meta = tomllib.loads(f.read_text())
-        meta["slug"] = f.parent.name
-        if meta.get("engine") in ENGINES:
-            out[meta["slug"]] = meta
-    order = list(ENGINES)
-    return dict(sorted(out.items(), key=lambda kv: (order.index(kv[1]["engine"]), kv[1].get("order", 99))))
-
 
 SCENARIOS = load_scenarios()
 

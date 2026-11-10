@@ -7,6 +7,14 @@ terminal in the browser on a disposable box with a broken database, fix it, pres
 Sign in with Google; progress, attempts, checks, hints and solution peeks are stored per user, with a
 profile page and a leaderboard (clean solves first).
 
+## Play in your terminal (no login)
+```
+uv tool install "git+https://github.com/SanjivKannaa/saddatabase#subdirectory=cli"
+saddb list && saddb start pg-wont-start      # then: saddb check / hint / extend / end / progress
+```
+Only needs Docker. Same scenarios and scoring as the website, progress kept locally. See [cli/README.md](cli/README.md).
+Images come from local `saddb/<slug>` builds or `ghcr.io/sanjivkannaa/saddb-<slug>` (publish with `bin/sadb publish`).
+
 ## Run
 ```
 bin/sadb build                     # engine bases + all scenario images (~5 min the first time)
@@ -56,6 +64,7 @@ On magickite it's published as https://sad.db.magickite by `sudo deploy/install-
 Helpers from `/usr/local/lib/sad/lib.sh` on every engine: `db_start`, `db_stop`, `pass`, `fail`, plus
 `sql`/`q` (Postgres, MySQL), `js`/`q` (MongoDB), `r` (redis-cli).
 
+Run `bin/sadb catalog` (the terminal client ships a copy of the catalogue; `bin/sadb catalog --check` fails if it is stale).
 Then add the reference fix as `tests/fixes/<slug>.sh` (runs as the player) and:
 ```
 bin/sadb build <slug> && tests/solve-all.sh <slug>   # must FAIL on a fresh box and PASS after the fix

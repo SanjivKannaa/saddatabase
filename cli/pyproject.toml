@@ -1,0 +1,17 @@
+[project]
+name = "saddb"
+version = "0.1.0"
+description = "sadDatabase in your terminal: fix broken databases in local Docker boxes."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+saddb = "saddb.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["saddb"]
