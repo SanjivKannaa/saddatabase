@@ -25,7 +25,8 @@ On magickite it's published as https://sad.db.magickite by `sudo deploy/install-
 | `SADDB_SECRET_KEY` | signs session cookies and login tickets; never change it casually (logs everyone out) |
 | `SADDB_ALLOWED_EMAILS` | optional comma list of emails and/or `@domain`s; empty = any verified Google account |
 | `SADDB_DEV_LOGIN` | `1` enables `/auth/dev?email=` for direct loopback requests only. Testing only |
-| `SADDB_SESSION_MINUTES`, `SADDB_MAX_SESSIONS` | box lifetime (45) and global box cap (4); one box per user |
+| `SADDB_BOX_MINUTES`, `SADDB_EXTEND_MINUTES`, `SADDB_MAX_EXTENSIONS` | box lifetime 15 min, extendable +15 min up to 2 times (45 max) |
+| `SADDB_MAX_SESSIONS` | global box cap (4); one box per user, enforced atomically |
 | `SADDB_DB` | SQLite path (default `data/saddb.sqlite`) |
 
 ## How it works

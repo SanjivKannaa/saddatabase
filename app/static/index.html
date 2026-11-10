@@ -99,6 +99,9 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 .rules { font-size: 14px; color: var(--muted); }
 .rules li { margin: 3px 0; }
 .note { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.timer.low { color: var(--bad); font-weight: 600; }
+button.nudge { border-color: var(--bad); color: var(--bad); }
+.termhelp { color: #8a8378; font: 12px "IBM Plex Sans", sans-serif; padding: 6px 4px 0; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .notice { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
 @media (max-width: 820px) {
   .play { grid-template-columns: 1fr; height: auto; }
@@ -231,7 +234,8 @@ async function scenarioView(slug) {
       <details id="hints" ${s.hints.length ? 'open' : ''}><summary>Hints (${s.hints.length}/${s.hints_total})</summary><div id="hintlist"></div><div id="hintbtn"></div></details>
       <details id="sol" ${s.solution ? 'open' : ''}><summary>Solution &amp; lesson</summary><div id="solbody"></div></details>
     </section>
-    <section class="termwrap"><div id="term"></div><div class="idle" id="idle"></div></section>
+    <section class="termwrap"><div id="term"></div><div class="idle" id="idle"></div>
+      <div class="termhelp"><span>Select text + <b>Ctrl+C</b> to copy (no selection = interrupt) · <b>Ctrl+V</b> to paste · Ctrl+Shift+C/V work too</span><span id="extinfo"></span></div></section>
   </div>`;
 
   const renderHints = hints => {
@@ -254,7 +258,7 @@ async function scenarioView(slug) {
     $('#idle').innerHTML = `<div><p>Sign in to boot your own broken ${esc(s.engine_name)} box.</p>${signInButton()}</div>`;
     return;
   }
-  $('#btns').innerHTML = `<button class="primary" id="start">Start scenario</button><button id="check" disabled>Check my solution</button><button id="end" disabled>End</button>`;
+  $('#btns').innerHTML = `<button class="primary" id="start">Start scenario</button><button id="check" disabled>Check my solution</button><button id="extend" disabled hidden>Extend</button><button id="end" disabled>End</button>`;
   $('#idle').innerHTML = '<div>Press <b>Start scenario</b> to get a shell on a fresh, broken box.</div>';
 
   const css = getComputedStyle(document.documentElement);
@@ -262,21 +266,49 @@ async function scenarioView(slug) {
     theme: { background: css.getPropertyValue('--term').trim(), foreground: '#ece7dd', cursor: '#e07a58' } });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  let ws = null, sid = null, timerInt = null;
+  let ws = null, sid = null, timerInt = null, expiresAt = 0, extLeft = 0, extMin = 15;
+  const copySel = () => {
+    const t = term.getSelection();
+    if (!t) return false;
+    (navigator.clipboard?.writeText(t) ?? Promise.reject()).catch(() => {
+      const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } finally { ta.remove(); }
+    });
+    term.clearSelection();
+    return true;
+  };
+  // Ctrl+C copies when something is selected (else it is ^C as usual). Ctrl+V: let the browser fire a native paste
+  // event, which xterm turns into input (no clipboard permission prompt needed).
+  term.attachCustomKeyEventHandler(e => {
+    if (e.type !== 'keydown' || !(e.ctrlKey || e.metaKey) || e.altKey) return true;
+    const k = e.key.toLowerCase();
+    if (k === 'c' && (e.shiftKey || term.hasSelection())) { copySel(); e.preventDefault(); return false; }
+    if (k === 'v') return false;
+    return true;
+  });
   const sendSize = () => ws && ws.readyState === 1 && ws.send(`\x00resize:${term.cols}x${term.rows}`);
   const onResize = () => { try { fit.fit(); } catch {} sendSize(); };
   window.addEventListener('resize', onResize);
   term.onData(d => ws && ws.readyState === 1 && ws.send(new TextEncoder().encode(d)));
   const openTerm = () => { $('#idle').style.display = 'none'; if (!term.element) term.open($('#term')); onResize(); };
   const setButtons = live => { $('#start').disabled = live; $('#check').disabled = !live; $('#end').disabled = !live;
-    $('#start').textContent = live ? 'Running' : 'Start scenario'; };
+    $('#start').textContent = live ? 'Running' : 'Start scenario'; renderExtend(live); };
+  function renderExtend(live) {
+    const b = $('#extend'); if (!b) return;
+    b.hidden = !live; b.disabled = !live || extLeft <= 0;
+    b.textContent = extLeft > 0 ? `+${extMin} min (${extLeft} left)` : 'No extensions left';
+    $('#extinfo').textContent = live ? (extLeft > 0 ? `${extLeft} extension${extLeft > 1 ? 's' : ''} of ${extMin} min left` : 'no extensions left') : '';
+  }
+  const applyInfo = st => { expiresAt = st.expires_at; extLeft = st.extensions_left ?? 0; extMin = st.extend_minutes ?? 15; };
 
-  function startTimer(expires) {
+  function startTimer() {
     clearInterval(timerInt);
     const tick = () => {
-      const left = Math.max(0, expires - Date.now() / 1000);
-      if ($('#timer')) $('#timer').textContent = `⏱ ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')} left`;
-      if (left <= 0) { clearInterval(timerInt); teardown('Session expired.'); }
+      const left = Math.max(0, expiresAt - Date.now() / 1000), low = left <= 180;
+      const t = $('#timer');
+      if (t) { t.textContent = `⏱ ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')} left`; t.classList.toggle('low', low); }
+      const b = $('#extend'); if (b) b.classList.toggle('nudge', low && extLeft > 0);
+      if (left <= 0) { clearInterval(timerInt); teardown('Time is up: the box was removed.'); }
     };
     tick(); timerInt = setInterval(tick, 1000);
   }
@@ -311,7 +343,7 @@ async function scenarioView(slug) {
       const st = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ slug }) });
       sid = st.id; openTerm(); term.reset();
       await waitReady();
-      setButtons(true); startTimer(st.expires_at); connect();
+      applyInfo(st); setButtons(true); startTimer(); connect();
     } catch (e) {
       $('#start').disabled = false;
       if (e.status === 409 && ME.active_session) {
@@ -338,11 +370,17 @@ async function scenarioView(slug) {
     } catch (e) { showErr(e.message); }
     if ($('#check')) { $('#check').disabled = !sid; $('#check').textContent = 'Check my solution'; }
   };
+  $('#extend').onclick = async () => {
+    $('#extend').disabled = true;
+    try { const st = await api(`/api/sessions/${sid}/extend`, { method: 'POST' }); applyInfo(st); term.write(`\r\n\x1b[90m[box extended by ${extMin} min]\x1b[0m\r\n`); }
+    catch (e) { showErr(e.message); }
+    renderExtend(!!sid); startTimer();
+  };
   $('#end').onclick = async () => { try { await api(`/api/sessions/${sid}`, { method: 'DELETE' }); } catch {} teardown('Session ended. The box is gone.'); await loadMe(); };
 
   // reconnect to this scenario's running box (after a reload or navigation)
   const a = ME.active_session;
-  if (a && a.slug === slug) { sid = a.id; setButtons(true); startTimer(a.expires_at); connect(); }
+  if (a && a.slug === slug) { sid = a.id; applyInfo(a); setButtons(true); startTimer(); connect(); }
   cleanup = () => { window.removeEventListener('resize', onResize); clearInterval(timerInt); if (ws) { ws.onclose = null; ws.close(); } term.dispose(); };
 }
 

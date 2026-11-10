@@ -1,6 +1,7 @@
 """sadDatabase: each play session is a disposable, network-less container with a broken database."""
 import asyncio
 import secrets
+import threading
 import time
 import tomllib
 from contextlib import asynccontextmanager
@@ -76,9 +77,22 @@ def scenario(slug: str) -> dict:
     return SCENARIOS[slug]
 
 
+_start_lock = threading.Lock()   # makes "one box per user" and the global cap atomic
+
+
+def box_expiry(c) -> tuple[int, int]:
+    """(expires_at, extensions) from the database; the container label is only a fallback."""
+    t = store.box_times(c.labels[LABEL])
+    if t and t["expires_at"]:
+        return t["expires_at"], t["extensions"]
+    return int(c.labels.get("saddb.expires", 0)), 0
+
+
 def session_info(c) -> dict:
-    return {"id": c.labels[LABEL], "slug": c.labels["saddb.slug"],
-            "expires_at": int(c.labels["saddb.expires"]), "status": c.status}
+    exp, ext = box_expiry(c)
+    return {"id": c.labels[LABEL], "slug": c.labels["saddb.slug"], "expires_at": exp, "status": c.status,
+            "extensions_used": ext, "extensions_left": max(0, config.MAX_EXTENSIONS - ext),
+            "extend_minutes": config.EXTEND_SECONDS // 60}
 
 
 def user_boxes(uid: int):
@@ -108,7 +122,7 @@ async def reaper():
                 if sid not in live:
                     store.end_attempt(sid, "lost")
             for c in boxes:
-                if int(c.labels.get("saddb.expires", 0)) < now or c.status == "exited":
+                if box_expiry(c)[0] < now or c.status == "exited":
                     store.end_attempt(c.labels[LABEL], "expired")
                     try:
                         c.remove(force=True)
@@ -230,30 +244,37 @@ class StartReq(BaseModel):
 @app.post("/api/sessions")
 def start_session(req: StartReq, u: dict = Depends(require_user)):
     scenario(req.slug)
-    mine = user_boxes(u["id"])
-    if mine:
-        raise HTTPException(409, f"you already have a box running ({mine[0].labels['saddb.slug']}); end it first")
-    if len(dk.containers.list(filters={"label": LABEL})) >= config.MAX_SESSIONS:
-        raise HTTPException(429, f"all {config.MAX_SESSIONS} sandboxes are busy; try again in a few minutes")
     image = f"saddb/{req.slug}:latest"
     try:
         labels = dk.images.get(image).labels or {}
     except ImageNotFound:
         raise HTTPException(503, f"image {image} is not built; run bin/sadb build {req.slug}")
-    sid = secrets.token_hex(12)
-    expires = int(time.time()) + config.SESSION_TTL
-    mem = labels.get("saddb.mem", "512m")
-    c = dk.containers.run(
+    with _start_lock:
+        mine = user_boxes(u["id"])
+        if mine:
+            raise HTTPException(409, f"you already have a box running ({mine[0].labels['saddb.slug']}); end it first")
+        if len(dk.containers.list(filters={"label": LABEL})) >= config.MAX_SESSIONS:
+            raise HTTPException(429, f"all {config.MAX_SESSIONS} sandboxes are busy; try again in a few minutes")
+        sid = secrets.token_hex(12)
+        expires = int(time.time()) + config.BOX_SECONDS
+        mem = labels.get("saddb.mem", "512m")
+        store.start_attempt(u["id"], req.slug, sid, expires)
+        ceiling = expires + config.MAX_EXTENSIONS * config.EXTEND_SECONDS   # label = hard max; DB holds the live expiry
+        c = _run_box(image, req.slug, sid, u["id"], ceiling, mem)
+    return session_info(c)
+
+
+def _run_box(image: str, slug: str, sid: str, uid: int, expires: int, mem: str):
+    req_slug = slug
+    return dk.containers.run(
         image, detach=True,
-        name=f"saddb-{req.slug}-{sid[:6]}", hostname=f"sad-{req.slug}"[:63],
-        labels={LABEL: sid, "saddb.slug": req.slug, "saddb.owner": str(u["id"]), "saddb.expires": str(expires)},
+        name=f"saddb-{req_slug}-{sid[:6]}", hostname=f"sad-{req_slug}"[:63],
+        labels={LABEL: sid, "saddb.slug": req_slug, "saddb.owner": str(uid), "saddb.expires": str(expires)},
         network_mode="none",           # no way in or out except docker exec
         mem_limit=mem, memswap_limit=mem, nano_cpus=1_000_000_000, pids_limit=256,
         init=True, security_opt=["no-new-privileges"],
         cap_drop=["NET_RAW", "MKNOD", "AUDIT_WRITE", "SYS_CHROOT", "SETFCAP", "NET_BIND_SERVICE"],
     )
-    store.start_attempt(u["id"], req.slug, sid)
-    return session_info(c)
 
 
 @app.get("/api/sessions/{sid}")
@@ -261,6 +282,15 @@ def get_session(sid: str, u: dict = Depends(require_user)):
     c = find(sid, u)
     ready = c.status == "running" and c.exec_run(["test", "-f", "/run/sad-ready"]).exit_code == 0
     return session_info(c) | {"ready": ready}
+
+
+@app.post("/api/sessions/{sid}/extend")
+def extend_session(sid: str, u: dict = Depends(require_user)):
+    c = find(sid, u)
+    r = store.extend_box(sid, config.EXTEND_SECONDS, config.MAX_EXTENSIONS)
+    if not r["extended"]:
+        raise HTTPException(409, f"no extensions left (max {config.MAX_EXTENSIONS})")
+    return session_info(c)
 
 
 @app.post("/api/sessions/{sid}/check")

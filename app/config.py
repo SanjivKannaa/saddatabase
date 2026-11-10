@@ -26,7 +26,9 @@ SECRET_KEY = os.getenv("SADDB_SECRET_KEY", "")
 ALLOWED_EMAILS = [e.strip().lower() for e in os.getenv("SADDB_ALLOWED_EMAILS", "").split(",") if e.strip()]
 DEV_LOGIN = os.getenv("SADDB_DEV_LOGIN", "0") == "1"
 DB_PATH = Path(os.getenv("SADDB_DB", str(ROOT / "data" / "saddb.sqlite")))
-SESSION_TTL = int(os.getenv("SADDB_SESSION_MINUTES", "45")) * 60
+BOX_SECONDS = int(os.getenv("SADDB_BOX_MINUTES", "15")) * 60          # initial lifetime of a box
+EXTEND_SECONDS = int(os.getenv("SADDB_EXTEND_MINUTES", "15")) * 60    # each extension adds this
+MAX_EXTENSIONS = int(os.getenv("SADDB_MAX_EXTENSIONS", "2"))          # 15 + 2 x 15 = 45 min at most
 MAX_SESSIONS = int(os.getenv("SADDB_MAX_SESSIONS", "4"))
 SECURE_COOKIES = PUBLIC_URL.startswith("https://")
 

@@ -42,6 +42,8 @@ MIGRATIONS = [
     ("attempts", "score", "alter table attempts add column score integer"),
     ("attempts", "score_detail", "alter table attempts add column score_detail text"),
     ("progress", "best_score", "alter table progress add column best_score integer"),
+    ("attempts", "expires_at", "alter table attempts add column expires_at integer"),
+    ("attempts", "extensions", "alter table attempts add column extensions integer not null default 0"),
 ]
 
 
@@ -93,11 +95,28 @@ def _ensure_progress(c, uid: int, slug: str) -> None:
     c.execute("insert or ignore into progress (user_id, slug) values (?, ?)", (uid, slug))
 
 
-def start_attempt(uid: int, slug: str, sid: str) -> None:
+def start_attempt(uid: int, slug: str, sid: str, expires_at: int) -> None:
     with db() as c:
         _ensure_progress(c, uid, slug)
         c.execute("update progress set attempts = attempts + 1 where user_id=? and slug=?", (uid, slug))
-        c.execute("insert into attempts (user_id, slug, session_id, started_at) values (?,?,?,?)", (uid, slug, sid, now()))
+        c.execute("insert into attempts (user_id, slug, session_id, started_at, expires_at) values (?,?,?,?,?)",
+                  (uid, slug, sid, now(), expires_at))
+
+
+def box_times(sid: str) -> dict | None:
+    with db() as c:
+        r = c.execute("select expires_at, extensions from attempts where session_id=?", (sid,)).fetchone()
+        return dict(r) if r else None
+
+
+def extend_box(sid: str, add_seconds: int, max_extensions: int) -> dict:
+    """Push the expiry of an open box out by add_seconds, at most max_extensions times. Atomic in SQLite."""
+    with db() as c:
+        cur = c.execute("""update attempts set expires_at = expires_at + ?, extensions = extensions + 1
+                           where session_id = ? and ended_at is null and extensions < ?""",
+                        (add_seconds, sid, max_extensions))
+        r = c.execute("select expires_at, extensions from attempts where session_id=?", (sid,)).fetchone()
+        return {"extended": cur.rowcount == 1, **(dict(r) if r else {})}
 
 
 def end_attempt(sid: str, reason: str) -> None:
