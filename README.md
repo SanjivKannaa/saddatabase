@@ -65,6 +65,7 @@ Helpers from `/usr/local/lib/sad/lib.sh` on every engine: `db_start`, `db_stop`,
 `sql`/`q` (Postgres, MySQL), `js`/`q` (MongoDB), `r` (redis-cli).
 
 Run `bin/sadb catalog` (the terminal client ships a copy of the catalogue; `bin/sadb catalog --check` fails if it is stale).
+After changing the app, run `uv run python tests/smoke_api.py` (every endpoint, signed out and in).
 Then add the reference fix as `tests/fixes/<slug>.sh` (runs as the player) and:
 ```
 bin/sadb build <slug> && tests/solve-all.sh <slug>   # must FAIL on a fresh box and PASS after the fix

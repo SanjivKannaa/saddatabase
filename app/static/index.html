@@ -151,7 +151,8 @@ document.addEventListener('click', e => {
 window.addEventListener('popstate', route);
 
 async function loadMe() {
-  ME = await api('/api/me');
+  try { ME = await api('/api/me'); }
+  catch (e) { ME = { user: null, google: false, error: e.message }; console.error('loadMe', e); }
   $('#who').innerHTML = ME.user
     ? `<a class="chip" href="/leaderboard" data-link title="your points and rank">${ME.points} pts${ME.rank ? ` · #${ME.rank}` : ''}</a>
        <a href="/me" data-link>${ME.user.picture ? `<img src="${esc(ME.user.picture)}" alt="" referrerpolicy="no-referrer">` : ''}<span>${esc(ME.user.name)}</span></a>
@@ -445,7 +446,7 @@ async function leaderboardView() {
   document.querySelectorAll('#ptabs button').forEach(b => b.onclick = () => set('period', b.dataset.p));
 }
 
-loadMe().then(route);
+loadMe().finally(route);
 </script>
 </body>
 </html>

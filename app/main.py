@@ -23,6 +23,8 @@ LABEL = "saddb.session"
 
 SCENARIOS = load_scenarios()
 
+dk = docker.from_env()
+
 
 def public(meta: dict, full: bool = False) -> dict:
     e = ENGINES[meta["engine"]]
