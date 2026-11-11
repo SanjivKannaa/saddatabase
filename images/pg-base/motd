@@ -1,8 +1,9 @@
 
-  ┌─ sadDatabase ────────────────────────────────────────────────┐
-  │ You are the OS user "postgres" (no sudo). PGDATA=/srv/pgdata │
-  │ Server log: /var/log/postgresql/postgresql.log               │
-  │ Tools: psql, pg_ctl, dbctl, ps, less, nano, vi               │
-  │ No network: this box is isolated. Read the task, fix it.     │
-  └──────────────────────────────────────────────────────────────┘
+ sadDatabase · PostgreSQL 17
+ ───────────────────────────
+ you    postgres (OS user, no sudo)
+ data   /srv/pgdata  ($PGDATA)
+ log    /var/log/postgresql/postgresql.log
+ tools  psql pg_ctl dbctl ps less nano vi
+ net    none: this box is isolated
 

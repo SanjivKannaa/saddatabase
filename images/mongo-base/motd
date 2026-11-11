@@ -1,8 +1,10 @@
 
-  ┌─ sadDatabase · MongoDB 7.0 ───────────────────────────────────┐
-  │ You are the OS user "mongodb" (no sudo). Shell: mongosh       │
-  │ Config: /etc/mongodb/mongod.conf   Data: /srv/mongo           │
-  │ Log: /var/log/mongodb/mongod.log                              │
-  │ Server: dbctl start|stop|restart|status                       │
-  └───────────────────────────────────────────────────────────────┘
+ sadDatabase · MongoDB 7.0
+ ─────────────────────────
+ you     mongodb (OS user, no sudo)
+ shell   mongosh
+ config  /etc/mongodb/mongod.conf
+ data    /srv/mongo
+ log     /var/log/mongodb/mongod.log
+ server  dbctl start|stop|restart|status
 

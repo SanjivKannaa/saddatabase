@@ -1,9 +1,10 @@
 
-  ┌─ sadDatabase · MySQL 8.4 ─────────────────────────────────────┐
-  │ You are the OS user "mysql" (no sudo). `mysql` logs you in as │
-  │ root (creds in ~/.my.cnf). Data: /srv/mysql                   │
-  │ Config: /etc/my.cnf + /etc/mysql/conf.d/                      │
-  │ Error log: /var/log/mysql/error.log                           │
-  │ Server: dbctl start|stop|restart|status                       │
-  └───────────────────────────────────────────────────────────────┘
+ sadDatabase · MySQL 8.4
+ ───────────────────────
+ you     mysql (OS user, no sudo)
+ login   `mysql` = root (creds in ~/.my.cnf)
+ data    /srv/mysql
+ config  /etc/my.cnf + /etc/mysql/conf.d/
+ log     /var/log/mysql/error.log
+ server  dbctl start|stop|restart|status
 
