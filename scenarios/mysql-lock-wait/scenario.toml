@@ -1,0 +1,39 @@
+engine = "mysql"
+title = "Lock wait timeout exceeded"
+difficulty = "medium"
+minutes = 15
+order = 9
+tags = ["mysql", "innodb", "locks", "sys schema", "transactions"]
+summary = "Checkout fails after 50 seconds with a lock wait timeout. Find who holds the lock."
+description = """
+Every checkout for SKU `A-100` hangs for 50 seconds and then fails (database `store`):
+
+```sql
+UPDATE inventory SET qty = qty - 1 WHERE sku = 'A-100';
+-- ERROR 1205 (HY000): Lock wait timeout exceeded; try restarting transaction
+```
+
+1. Get `A-100` updates working again, without restarting MySQL.
+2. MySQL has no "idle in transaction" timeout, but it can still close sessions that sit idle too long. Make sure
+   an idle session (including one left inside an open transaction) is disconnected after **10 minutes at most**,
+   persistently, for new connections.
+"""
+hints = [
+  "`SELECT * FROM sys.innodb_lock_waits\\\\G`: who's waiting, who's blocking, and the ready-made `sql_kill_blocking_connection`.",
+  "`information_schema.innodb_trx` shows open transactions and how long they've been running (`trx_started`).",
+  "Idle sessions are closed after `wait_timeout` seconds (`interactive_timeout` for interactive clients). Set the global value with `SET PERSIST`.",
+]
+solution = """
+```sql
+SELECT waiting_query, blocking_pid, blocking_trx_started, sql_kill_blocking_connection
+FROM sys.innodb_lock_waits\\G
+-- blocking: a 'batch' session that started a transaction hours ago, updated A-1xx rows and never committed
+KILL <blocking_pid>;        -- its transaction rolls back and the locks are released
+
+SET PERSIST wait_timeout = 600;
+SET PERSIST interactive_timeout = 600;
+```
+**Lesson:** a forgotten open transaction holds its row locks forever, and everyone behind it times out after
+`innodb_lock_wait_timeout`. `sys.innodb_lock_waits` finds the blocker in one query. Keep transactions short,
+always commit or roll back in `finally`, and let `wait_timeout` reap abandoned sessions.
+"""

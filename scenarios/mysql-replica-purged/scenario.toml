@@ -1,0 +1,50 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "Error 1236: the source purged required binary logs"
+difficulty = "hard"
+minutes = 25
+box_minutes = 30
+order = 10
+tags = ["mysql", "replication", "gtid", "reseed", "clone"]
+summary = "The replica was offline too long. The binlogs it needs are gone. Bring it back."
+description = """
+`node2` (3307) was switched off for a week for a hardware repair. Meanwhile `node1` (3306) kept taking orders
+and purged its old binary logs. Now node2 won't resume replicating.
+
+Bring node2 back as a healthy, **identical** replica of node1:
+
+1. Replication running with GTID auto-positioning, caught up.
+2. node2's `bookstore` data matches node1's exactly, and node2 has no transactions node1 doesn't.
+3. node2 is `super_read_only`, persistently.
+
+Orders keep arriving on node1 the whole time: don't stop them. `node1` / `node2` are root clients;
+the replication user is `repl` / `Repl-Lumen-2026`.
+"""
+hints = [
+  "`node2 -e 'SHOW REPLICA STATUS\\\\G'`: read `Last_IO_Error`. Compare node1's `@@gtid_purged` with node2's `@@gtid_executed`.",
+  "The missing transactions don't exist anywhere any more, so node2 has to be **reseeded** from a fresh copy of node1. (Purging less on node1 next time would have avoided this.)",
+  "Logical reseed: on node2, stop replication, drop `bookstore` and `RESET BINARY LOGS AND GTIDS` (temporarily turn off `super_read_only`), then `mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2` and `START REPLICA`.",
+  "Or physical: the CLONE plugin (`INSTALL PLUGIN clone SONAME 'mysql_clone.so'` on both, a donor user with `BACKUP_ADMIN`, `clone_valid_donor_list`, then `CLONE INSTANCE FROM …` on node2; afterwards start node2 with `dbctl start node2`).",
+]
+solution = """
+```sql
+-- node2: Got fatal error 1236 from source ... the source has purged binary logs containing GTIDs that the replica requires.
+STOP REPLICA;
+SET GLOBAL super_read_only = OFF;
+DROP DATABASE bookstore;
+RESET BINARY LOGS AND GTIDS;            -- forget node2's GTID history
+```
+```bash
+mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2
+```
+```sql
+-- node2
+START REPLICA;                           -- auto-position continues from the dump's GTID_PURGED
+SET PERSIST super_read_only = ON;
+```
+(The CLONE plugin does the same physically and is much faster on big data sets.)
+
+**Lesson:** GTID auto-positioning can only resume if the source still has every transaction the replica
+lacks. Once they're purged, the only way back is a reseed. Keep `binlog_expire_logs_seconds` longer than your
+longest planned replica outage, and keep a reseed procedure (dump or CLONE) written down and tested.
+"""

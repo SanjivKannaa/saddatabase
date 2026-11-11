@@ -1,0 +1,41 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "Binlogs ate the disk"
+difficulty = "medium"
+minutes = 20
+box_minutes = 20
+order = 8
+tags = ["mysql", "binlog", "replication", "disk space"]
+summary = "The data disk is filling with binary logs. Free space without breaking the replica that still needs some."
+description = """
+`/srv/mysql/node1` is filling up with binary logs: nobody ever set an expiry. **node2** (3307) replicates
+from **node1** (3306) but is **paused** for maintenance (its replication is stopped on purpose) and will resume later.
+
+1. Remove every binary log that is no longer needed, **without breaking node2**: when node2 resumes it must
+   be able to catch up.
+2. Never let it happen again: binary logs expire after **7 days at most**, and that survives a restart.
+3. Don't delete binlog files by hand: the server must stay consistent with its binlog index.
+
+Leave node2 paused; the grader resumes it to check.
+"""
+hints = [
+  "`node1 -e 'SHOW BINARY LOGS'` lists them with sizes. `du -sh /srv/mysql/node1/binlog.*` agrees.",
+  "Which file does node2 still need? `node2 -e 'SHOW REPLICA STATUS\\\\G'`: `Source_Log_File` is the last one its IO thread read.",
+  "`PURGE BINARY LOGS TO 'binlog.0000NN';` removes everything *before* that file and updates the index. `rm` would leave the index pointing at missing files.",
+  "Expiry: `binlog_expire_logs_seconds` (604800 = 7 days). `SET PERSIST` makes it stick.",
+]
+solution = """
+```sql
+-- node2: where did it stop?
+SHOW REPLICA STATUS\\G          -- Source_Log_File: binlog.000031
+-- node1: keep that file and everything after it
+PURGE BINARY LOGS TO 'binlog.000031';
+SET PERSIST binlog_expire_logs_seconds = 604800;
+```
+With GTID auto-positioning node2 asks node1 for the transactions it lacks, and they're all in `binlog.000031`
+onwards. Purge past that and node2 fails with error 1236 when it resumes (the hard drill in this track).
+
+**Lesson:** binlogs are both your replication stream and your point-in-time-recovery window. Size the expiry
+to cover your oldest backup *and* your longest replica outage, purge with `PURGE BINARY LOGS` (never `rm`),
+and alert on disk usage before it's 100%.
+"""

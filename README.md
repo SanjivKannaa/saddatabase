@@ -108,6 +108,12 @@ bin/sadb shell <slug>                                # play-test in a throwaway 
 | | mysql-locked-out | medium | locked account, expired password, inactive default role |
 | | mysql-slow-query | medium | implicit type conversion disables an index |
 | | mysql-metadata-lock | hard | metadata locks, idle open transactions, `KILL` |
+| | mysql-emoji | easy | utf8mb3 → utf8mb4 without mangling old text |
+| | mysql-too-many-connections | medium | reserved admin slot, KILL, MAX_USER_CONNECTIONS |
+| | mysql-hot-query | medium | sys.statement_analysis / digests, index the costliest query |
+| | mysql-binlog-disk | medium | PURGE BINARY LOGS safely around a paused replica, expiry policy |
+| | mysql-lock-wait | medium | sys.innodb_lock_waits, forgotten transaction, wait_timeout |
+| | mysql-replica-purged | hard | error 1236: reseed a replica (dump or CLONE) |
 | MongoDB | mongo-wont-start | easy | YAML tabs, wrong `dbPath` |
 | | mongo-slow-query | medium | `explain`, ESR compound index, in-memory sort |
 | | mongo-auth | medium | `authSource`, user database, least-privilege roles |

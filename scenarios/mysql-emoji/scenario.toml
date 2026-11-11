@@ -1,0 +1,39 @@
+engine = "mysql"
+title = "Incorrect string value: '\\xF0\\x9F\\x93\\x9A'"
+difficulty = "easy"
+minutes = 15
+order = 5
+tags = ["mysql", "charset", "utf8mb4", "collation"]
+summary = "Reviews with emoji fail to save. Accented reviews from years ago must survive the fix."
+description = """
+Customers can't post reviews containing emoji (database `shop`):
+
+```sql
+INSERT INTO reviews (book_id, author, body) VALUES (1, 'Ana', 'Loved it 📚🔥');
+-- ERROR 1366 (HY000): Incorrect string value: '\\xF0\\x9F\\x93\\x9A...' for column 'body'
+```
+
+1. Make emoji (and any other Unicode) work in `reviews`.
+2. Keep every existing review **exactly** as it is: there are years of French and German reviews with accents.
+3. New tables created in `shop` should get a 4-byte-safe character set by default.
+"""
+hints = [
+  "`SHOW CREATE TABLE reviews;` and `SELECT @@character_set_database` (in `shop`). What is `utf8mb3`, and how many bytes does an emoji need?",
+  "`ALTER TABLE … CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci` converts the columns *and* the data properly. Changing only the table default doesn't touch existing columns.",
+  "The database has a default too: `ALTER DATABASE shop CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;`",
+]
+solution = """
+`reviews` (and the `shop` database) use **`utf8mb3`**, MySQL's old 3-byte "utf8", which can't store characters
+outside the Basic Multilingual Plane, like emoji (4 bytes in UTF-8).
+
+```sql
+ALTER TABLE shop.reviews CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+ALTER DATABASE shop CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+```
+`CONVERT TO` re-encodes the existing text (é is valid in both, so nothing changes visibly) and switches every
+character column. `ALTER TABLE … DEFAULT CHARSET` alone only affects columns added later.
+
+**Lesson:** in MySQL, `utf8` historically meant `utf8mb3`. Use `utf8mb4` everywhere (it's the default since 8.0),
+and watch out for legacy schemas: the error appears only when someone finally types an emoji. Converting rewrites
+the table, so on big tables use an online schema change tool.
+"""

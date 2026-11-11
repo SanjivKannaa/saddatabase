@@ -1,0 +1,40 @@
+engine = "mysql"
+title = "ERROR 1040: Too many connections"
+difficulty = "medium"
+minutes = 15
+order = 6
+tags = ["mysql", "connections", "accounts", "processlist"]
+summary = "The web app can't get a connection. A reporting tool is hoarding all of them."
+description = """
+The web app can't connect (it uses `'web'@'localhost'`, password `W3b-Lumen`):
+
+```
+mysql -u web -pW3b-Lumen shop -e 'select 1'
+ERROR 1040 (HY000): Too many connections
+```
+
+1. Get the web app connecting again, **without restarting MySQL**.
+2. Make sure the **`reporting`** account can never hold more than **5** connections again.
+"""
+hints = [
+  "Why can *you* still log in as root? MySQL keeps one extra connection for accounts with `CONNECTION_ADMIN` (or `SUPER`).",
+  "`SELECT user, command, time, state FROM information_schema.processlist ORDER BY time DESC;` and count per user. `KILL <id>` ends a connection.",
+  "Limits per account: `ALTER USER … WITH MAX_USER_CONNECTIONS n`.",
+]
+solution = """
+`max_connections` is 30 and a `reporting` dashboard has opened 30 connections that sit idle (`Sleep`).
+Root still gets in through the one reserved admin slot.
+
+```sql
+SELECT user, COUNT(*) FROM information_schema.processlist GROUP BY user;
+-- kill them all in one go:
+SELECT GROUP_CONCAT(CONCAT('KILL ', id, ';') SEPARATOR ' ') FROM information_schema.processlist WHERE user = 'reporting';
+-- (paste the output) or per id: KILL 42;
+ALTER USER 'reporting'@'localhost' WITH MAX_USER_CONNECTIONS 5;
+```
+Worth doing too: a lower `wait_timeout` so idle connections get closed, and a connection pool (or ProxySQL)
+in front of chatty clients.
+
+**Lesson:** the reserved admin connection is your way in when everything else is locked out, so don't give
+`CONNECTION_ADMIN` to apps. Per-account limits (`MAX_USER_CONNECTIONS`) stop one client starving the rest.
+"""

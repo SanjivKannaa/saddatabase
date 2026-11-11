@@ -445,6 +445,58 @@
    "box_minutes": 30
   },
   {
+   "slug": "mysql-emoji",
+   "engine": "mysql",
+   "title": "Incorrect string value: '\\xF0\\x9F\\x93\\x9A'",
+   "difficulty": "easy",
+   "minutes": 15,
+   "order": 5,
+   "tags": [
+    "mysql",
+    "charset",
+    "utf8mb4",
+    "collation"
+   ],
+   "summary": "Reviews with emoji fail to save. Accented reviews from years ago must survive the fix.",
+   "description": "Customers can't post reviews containing emoji (database `shop`):\n\n```sql\nINSERT INTO reviews (book_id, author, body) VALUES (1, 'Ana', 'Loved it 📚🔥');\n-- ERROR 1366 (HY000): Incorrect string value: '\\xF0\\x9F\\x93\\x9A...' for column 'body'\n```\n\n1. Make emoji (and any other Unicode) work in `reviews`.\n2. Keep every existing review **exactly** as it is: there are years of French and German reviews with accents.\n3. New tables created in `shop` should get a 4-byte-safe character set by default.\n",
+   "hints": [
+    "`SHOW CREATE TABLE reviews;` and `SELECT @@character_set_database` (in `shop`). What is `utf8mb3`, and how many bytes does an emoji need?",
+    "`ALTER TABLE … CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci` converts the columns *and* the data properly. Changing only the table default doesn't touch existing columns.",
+    "The database has a default too: `ALTER DATABASE shop CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;`"
+   ],
+   "solution": "`reviews` (and the `shop` database) use **`utf8mb3`**, MySQL's old 3-byte \"utf8\", which can't store characters\noutside the Basic Multilingual Plane, like emoji (4 bytes in UTF-8).\n\n```sql\nALTER TABLE shop.reviews CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\nALTER DATABASE shop CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\n```\n`CONVERT TO` re-encodes the existing text (é is valid in both, so nothing changes visibly) and switches every\ncharacter column. `ALTER TABLE … DEFAULT CHARSET` alone only affects columns added later.\n\n**Lesson:** in MySQL, `utf8` historically meant `utf8mb3`. Use `utf8mb4` everywhere (it's the default since 8.0),\nand watch out for legacy schemas: the error appears only when someone finally types an emoji. Converting rewrites\nthe table, so on big tables use an online schema change tool.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
+   "slug": "mysql-too-many-connections",
+   "engine": "mysql",
+   "title": "ERROR 1040: Too many connections",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 6,
+   "tags": [
+    "mysql",
+    "connections",
+    "accounts",
+    "processlist"
+   ],
+   "summary": "The web app can't get a connection. A reporting tool is hoarding all of them.",
+   "description": "The web app can't connect (it uses `'web'@'localhost'`, password `W3b-Lumen`):\n\n```\nmysql -u web -pW3b-Lumen shop -e 'select 1'\nERROR 1040 (HY000): Too many connections\n```\n\n1. Get the web app connecting again, **without restarting MySQL**.\n2. Make sure the **`reporting`** account can never hold more than **5** connections again.\n",
+   "hints": [
+    "Why can *you* still log in as root? MySQL keeps one extra connection for accounts with `CONNECTION_ADMIN` (or `SUPER`).",
+    "`SELECT user, command, time, state FROM information_schema.processlist ORDER BY time DESC;` and count per user. `KILL <id>` ends a connection.",
+    "Limits per account: `ALTER USER … WITH MAX_USER_CONNECTIONS n`."
+   ],
+   "solution": "`max_connections` is 30 and a `reporting` dashboard has opened 30 connections that sit idle (`Sleep`).\nRoot still gets in through the one reserved admin slot.\n\n```sql\nSELECT user, COUNT(*) FROM information_schema.processlist GROUP BY user;\n-- kill them all in one go:\nSELECT GROUP_CONCAT(CONCAT('KILL ', id, ';') SEPARATOR ' ') FROM information_schema.processlist WHERE user = 'reporting';\n-- (paste the output) or per id: KILL 42;\nALTER USER 'reporting'@'localhost' WITH MAX_USER_CONNECTIONS 5;\n```\nWorth doing too: a lower `wait_timeout` so idle connections get closed, and a connection pool (or ProxySQL)\nin front of chatty clients.\n\n**Lesson:** the reserved admin connection is your way in when everything else is locked out, so don't give\n`CONNECTION_ADMIN` to apps. Per-account limits (`MAX_USER_CONNECTIONS`) stop one client starving the rest.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
    "slug": "mysql-story-06-lag",
    "engine": "mysql",
    "title": "The replica is 20 minutes behind",
@@ -471,6 +523,32 @@
    "chapter": 6,
    "narrative": "**Sam:** The finance dashboard (it reads from the replica) still shows this morning's sales. Is node2 OK?\n\n**Priya:** That dashboard is how we decide restocking for Black Friday. Find out why node2 is behind, get it\ncaught up, and make sure whatever caused it doesn't come back tonight.\n",
    "box_minutes": 20
+  },
+  {
+   "slug": "mysql-hot-query",
+   "engine": "mysql",
+   "title": "The CPU is pegged",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 7,
+   "tags": [
+    "mysql",
+    "performance_schema",
+    "sys schema",
+    "indexes"
+   ],
+   "summary": "MySQL is at 100% CPU. Find the query that costs the most, with evidence, and fix it.",
+   "description": "MySQL (database `shop`) has been at 100% CPU since this morning's release. The app is running several\nqueries in a loop right now.\n\nFind the statement that is costing the server the most **in total**, and fix it so it stops scanning the\ntable, without changing the app's queries.\n\nDon't guess: the server keeps statistics on every statement it runs.\n",
+   "hints": [
+    "`performance_schema` aggregates every statement by its *digest* (the query with literals stripped). The `sys` schema makes it readable: `SELECT query, exec_count, total_latency, rows_examined_avg FROM sys.statement_analysis LIMIT 5;`",
+    "`sys.statements_with_full_table_scans` lists statements that scan whole tables. Compare *total* latency, not the slowest single execution.",
+    "Once you've found it, `EXPLAIN` it with a real value, then add the index it needs."
+   ],
+   "solution": "```sql\nSELECT query, exec_count, total_latency, rows_examined_avg\nFROM sys.statement_analysis ORDER BY total_latency DESC LIMIT 5;\n```\nThe top entry is `SELECT … FROM orders WHERE coupon_code = ?`: hundreds of executions, each examining all\n~300k rows. The `notes LIKE '%…%'` query is slower *per run*, but it runs once a minute, so it's a red herring.\n\n```sql\nEXPLAIN SELECT id, total FROM shop.orders WHERE coupon_code = 'BF2026-1234';   -- type: ALL\nALTER TABLE shop.orders ADD INDEX idx_coupon (coupon_code);\n```\n`sys.statement_analysis` then shows the digest's average latency drop to microseconds.\n\n**Lesson:** measure before you tune. `performance_schema` statement digests (via the `sys` schema, or\n`pt-query-digest` on a slow log) rank queries by *total* cost: a cheap query run a million times beats a slow\none run once. Fix the top of that list first.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mysql-story-07-failover",
@@ -528,6 +606,60 @@
    "box_minutes": 30
   },
   {
+   "slug": "mysql-binlog-disk",
+   "engine": "mysql",
+   "title": "Binlogs ate the disk",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 8,
+   "tags": [
+    "mysql",
+    "binlog",
+    "replication",
+    "disk space"
+   ],
+   "summary": "The data disk is filling with binary logs. Free space without breaking the replica that still needs some.",
+   "description": "`/srv/mysql/node1` is filling up with binary logs: nobody ever set an expiry. **node2** (3307) replicates\nfrom **node1** (3306) but is **paused** for maintenance (its replication is stopped on purpose) and will resume later.\n\n1. Remove every binary log that is no longer needed, **without breaking node2**: when node2 resumes it must\n   be able to catch up.\n2. Never let it happen again: binary logs expire after **7 days at most**, and that survives a restart.\n3. Don't delete binlog files by hand: the server must stay consistent with its binlog index.\n\nLeave node2 paused; the grader resumes it to check.\n",
+   "hints": [
+    "`node1 -e 'SHOW BINARY LOGS'` lists them with sizes. `du -sh /srv/mysql/node1/binlog.*` agrees.",
+    "Which file does node2 still need? `node2 -e 'SHOW REPLICA STATUS\\\\G'`: `Source_Log_File` is the last one its IO thread read.",
+    "`PURGE BINARY LOGS TO 'binlog.0000NN';` removes everything *before* that file and updates the index. `rm` would leave the index pointing at missing files.",
+    "Expiry: `binlog_expire_logs_seconds` (604800 = 7 days). `SET PERSIST` makes it stick."
+   ],
+   "solution": "```sql\n-- node2: where did it stop?\nSHOW REPLICA STATUS\\G          -- Source_Log_File: binlog.000031\n-- node1: keep that file and everything after it\nPURGE BINARY LOGS TO 'binlog.000031';\nSET PERSIST binlog_expire_logs_seconds = 604800;\n```\nWith GTID auto-positioning node2 asks node1 for the transactions it lacks, and they're all in `binlog.000031`\nonwards. Purge past that and node2 fails with error 1236 when it resumes (the hard drill in this track).\n\n**Lesson:** binlogs are both your replication stream and your point-in-time-recovery window. Size the expiry\nto cover your oldest backup *and* your longest replica outage, purge with `PURGE BINARY LOGS` (never `rm`),\nand alert on disk usage before it's 100%.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": 20
+  },
+  {
+   "slug": "mysql-lock-wait",
+   "engine": "mysql",
+   "title": "Lock wait timeout exceeded",
+   "difficulty": "medium",
+   "minutes": 15,
+   "order": 9,
+   "tags": [
+    "mysql",
+    "innodb",
+    "locks",
+    "sys schema",
+    "transactions"
+   ],
+   "summary": "Checkout fails after 50 seconds with a lock wait timeout. Find who holds the lock.",
+   "description": "Every checkout for SKU `A-100` hangs for 50 seconds and then fails (database `store`):\n\n```sql\nUPDATE inventory SET qty = qty - 1 WHERE sku = 'A-100';\n-- ERROR 1205 (HY000): Lock wait timeout exceeded; try restarting transaction\n```\n\n1. Get `A-100` updates working again, without restarting MySQL.\n2. MySQL has no \"idle in transaction\" timeout, but it can still close sessions that sit idle too long. Make sure\n   an idle session (including one left inside an open transaction) is disconnected after **10 minutes at most**,\n   persistently, for new connections.\n",
+   "hints": [
+    "`SELECT * FROM sys.innodb_lock_waits\\\\G`: who's waiting, who's blocking, and the ready-made `sql_kill_blocking_connection`.",
+    "`information_schema.innodb_trx` shows open transactions and how long they've been running (`trx_started`).",
+    "Idle sessions are closed after `wait_timeout` seconds (`interactive_timeout` for interactive clients). Set the global value with `SET PERSIST`."
+   ],
+   "solution": "```sql\nSELECT waiting_query, blocking_pid, blocking_trx_started, sql_kill_blocking_connection\nFROM sys.innodb_lock_waits\\G\n-- blocking: a 'batch' session that started a transaction hours ago, updated A-1xx rows and never committed\nKILL <blocking_pid>;        -- its transaction rolls back and the locks are released\n\nSET PERSIST wait_timeout = 600;\nSET PERSIST interactive_timeout = 600;\n```\n**Lesson:** a forgotten open transaction holds its row locks forever, and everyone behind it times out after\n`innodb_lock_wait_timeout`. `sys.innodb_lock_waits` finds the blocker in one query. Keep transactions short,\nalways commit or roll back in `finally`, and let `wait_timeout` reap abandoned sessions.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
    "slug": "mysql-story-09-ghost",
    "engine": "mysql",
    "title": "ALTER TABLE without the freeze",
@@ -553,6 +685,34 @@
    "story": "mysql",
    "chapter": 9,
    "narrative": "**Marco:** We're moving to ISBN-13. `books.isbn` is `CHAR(10)` and it needs to be `VARCHAR(17)` with an index.\nLast time I ran an `ALTER TABLE` on `books` the whole site froze for a minute and Sam got 200 emails.\n\n**Priya:** Not again. Do it **online**. Use gh-ost: it's on the box.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mysql-replica-purged",
+   "engine": "mysql",
+   "title": "Error 1236: the source purged required binary logs",
+   "difficulty": "hard",
+   "minutes": 25,
+   "order": 10,
+   "tags": [
+    "mysql",
+    "replication",
+    "gtid",
+    "reseed",
+    "clone"
+   ],
+   "summary": "The replica was offline too long. The binlogs it needs are gone. Bring it back.",
+   "description": "`node2` (3307) was switched off for a week for a hardware repair. Meanwhile `node1` (3306) kept taking orders\nand purged its old binary logs. Now node2 won't resume replicating.\n\nBring node2 back as a healthy, **identical** replica of node1:\n\n1. Replication running with GTID auto-positioning, caught up.\n2. node2's `bookstore` data matches node1's exactly, and node2 has no transactions node1 doesn't.\n3. node2 is `super_read_only`, persistently.\n\nOrders keep arriving on node1 the whole time: don't stop them. `node1` / `node2` are root clients;\nthe replication user is `repl` / `Repl-Lumen-2026`.\n",
+   "hints": [
+    "`node2 -e 'SHOW REPLICA STATUS\\\\G'`: read `Last_IO_Error`. Compare node1's `@@gtid_purged` with node2's `@@gtid_executed`.",
+    "The missing transactions don't exist anywhere any more, so node2 has to be **reseeded** from a fresh copy of node1. (Purging less on node1 next time would have avoided this.)",
+    "Logical reseed: on node2, stop replication, drop `bookstore` and `RESET BINARY LOGS AND GTIDS` (temporarily turn off `super_read_only`), then `mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2` and `START REPLICA`.",
+    "Or physical: the CLONE plugin (`INSTALL PLUGIN clone SONAME 'mysql_clone.so'` on both, a donor user with `BACKUP_ADMIN`, `clone_valid_donor_list`, then `CLONE INSTANCE FROM …` on node2; afterwards start node2 with `dbctl start node2`)."
+   ],
+   "solution": "```sql\n-- node2: Got fatal error 1236 from source ... the source has purged binary logs containing GTIDs that the replica requires.\nSTOP REPLICA;\nSET GLOBAL super_read_only = OFF;\nDROP DATABASE bookstore;\nRESET BINARY LOGS AND GTIDS;            -- forget node2's GTID history\n```\n```bash\nmysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2\n```\n```sql\n-- node2\nSTART REPLICA;                           -- auto-position continues from the dump's GTID_PURGED\nSET PERSIST super_read_only = ON;\n```\n(The CLONE plugin does the same physically and is much faster on big data sets.)\n\n**Lesson:** GTID auto-positioning can only resume if the source still has every transaction the replica\nlacks. Once they're purged, the only way back is a reseed. Keep `binlog_expire_logs_seconds` longer than your\nlongest planned replica outage, and keep a reseed procedure (dump or CLONE) written down and tested.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
    "box_minutes": 30
   },
   {

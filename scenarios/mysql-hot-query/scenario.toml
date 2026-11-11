@@ -1,0 +1,39 @@
+engine = "mysql"
+title = "The CPU is pegged"
+difficulty = "medium"
+minutes = 20
+order = 7
+tags = ["mysql", "performance_schema", "sys schema", "indexes"]
+summary = "MySQL is at 100% CPU. Find the query that costs the most, with evidence, and fix it."
+description = """
+MySQL (database `shop`) has been at 100% CPU since this morning's release. The app is running several
+queries in a loop right now.
+
+Find the statement that is costing the server the most **in total**, and fix it so it stops scanning the
+table, without changing the app's queries.
+
+Don't guess: the server keeps statistics on every statement it runs.
+"""
+hints = [
+  "`performance_schema` aggregates every statement by its *digest* (the query with literals stripped). The `sys` schema makes it readable: `SELECT query, exec_count, total_latency, rows_examined_avg FROM sys.statement_analysis LIMIT 5;`",
+  "`sys.statements_with_full_table_scans` lists statements that scan whole tables. Compare *total* latency, not the slowest single execution.",
+  "Once you've found it, `EXPLAIN` it with a real value, then add the index it needs.",
+]
+solution = """
+```sql
+SELECT query, exec_count, total_latency, rows_examined_avg
+FROM sys.statement_analysis ORDER BY total_latency DESC LIMIT 5;
+```
+The top entry is `SELECT … FROM orders WHERE coupon_code = ?`: hundreds of executions, each examining all
+~300k rows. The `notes LIKE '%…%'` query is slower *per run*, but it runs once a minute, so it's a red herring.
+
+```sql
+EXPLAIN SELECT id, total FROM shop.orders WHERE coupon_code = 'BF2026-1234';   -- type: ALL
+ALTER TABLE shop.orders ADD INDEX idx_coupon (coupon_code);
+```
+`sys.statement_analysis` then shows the digest's average latency drop to microseconds.
+
+**Lesson:** measure before you tune. `performance_schema` statement digests (via the `sys` schema, or
+`pt-query-digest` on a slow log) rank queries by *total* cost: a cheap query run a million times beats a slow
+one run once. Fix the top of that list first.
+"""
