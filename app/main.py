@@ -15,31 +15,44 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import config, scoring, store
-from .catalog import ENGINES, load_scenarios
+from .catalog import ENGINES, load_scenarios, load_stories
 from .auth import current_user, require_user, router as auth_router
 
 STATIC = Path(__file__).resolve().parent / "static"
 LABEL = "saddb.session"
 
 SCENARIOS = load_scenarios()
+STORIES = load_stories(SCENARIOS)   # also tags chapter scenarios with story + chapter
 
 dk = docker.from_env()
 
 
 def public(meta: dict, full: bool = False) -> dict:
     e = ENGINES[meta["engine"]]
-    d = {k: meta.get(k) for k in ("slug", "engine", "title", "difficulty", "minutes", "tags", "summary", "order")}
+    d = {k: meta.get(k) for k in ("slug", "engine", "title", "difficulty", "minutes", "tags", "summary", "order", "story", "chapter")}
     d["engine_name"] = f"{e['name']} {e['version']}"
     d["max_points"] = scoring.max_points(meta["difficulty"])
     if full:
         d["description"] = meta["description"]
         d["hints_total"] = len(meta.get("hints", []))
-        track = [s for s in SCENARIOS.values() if s["engine"] == meta["engine"]]
-        i = [s["slug"] for s in track].index(meta["slug"])
-        d["next"] = track[i + 1]["slug"] if i + 1 < len(track) else None
-        d["prev"] = track[i - 1]["slug"] if i > 0 else None
-        d["position"], d["track_size"] = i + 1, len(track)
+        d["narrative"] = meta.get("narrative")
+        d["box_minutes"] = box_seconds(meta) // 60
+        if meta.get("story"):           # story chapters: navigate in story order
+            st = STORIES[meta["story"]]
+            seq = [c for c in st["chapter_slugs"] if c in SCENARIOS]
+            d["story_title"] = st["title"]
+        else:                           # practice: navigate within the engine's track
+            seq = [s["slug"] for s in SCENARIOS.values() if s["engine"] == meta["engine"] and not s.get("story")]
+        i = seq.index(meta["slug"])
+        d["next"] = seq[i + 1] if i + 1 < len(seq) else None
+        d["prev"] = seq[i - 1] if i > 0 else None
+        d["position"], d["track_size"] = i + 1, len(seq)
     return d
+
+
+def box_seconds(meta: dict) -> int:
+    """A box's initial lifetime: the scenario's box_minutes (long story chapters) or the default."""
+    return int(meta["box_minutes"]) * 60 if meta.get("box_minutes") else config.BOX_SECONDS
 
 
 def scorer_for(slug: str):
@@ -101,7 +114,7 @@ async def reaper():
                 if box_expiry(c)[0] < now or c.status == "exited":
                     store.end_attempt(c.labels[LABEL], "expired")
                     try:
-                        c.remove(force=True)
+                        c.remove(force=True, v=True)
                     except (NotFound, APIError):
                         pass
         except Exception as e:  # keep reaping whatever happens
@@ -147,13 +160,51 @@ def tracks(request: Request):
     out = []
     for key, e in ENGINES.items():
         items = []
-        for s in (s for s in SCENARIOS.values() if s["engine"] == key):
+        for s in (s for s in SCENARIOS.values() if s["engine"] == key and not s.get("story")):
             p = prog.get(s["slug"], {})
             items.append(public(s) | {"solved": bool(p.get("first_solved_at")), "attempts": p.get("attempts", 0),
                                       "best_seconds": p.get("best_seconds"), "points": p.get("best_score")})
         out.append({"engine": key, **e, "scenarios": items, "solved": sum(i["solved"] for i in items),
                     "points": sum(i["points"] or 0 for i in items), "max_points": sum(i["max_points"] for i in items)})
     return out
+
+
+def story_view(st: dict, prog: dict) -> dict:
+    acts, n, done, pts, mx = [], 0, 0, 0, 0
+    for act in st.get("acts", []):
+        chapters = []
+        for slug in act["chapters"]:
+            n += 1
+            if slug not in SCENARIOS:
+                chapters.append({"slug": slug, "chapter": n, "coming_soon": True})
+                continue
+            p = prog.get(slug, {})
+            c = public(SCENARIOS[slug]) | {"solved": bool(p.get("first_solved_at")), "attempts": p.get("attempts", 0),
+                                          "best_seconds": p.get("best_seconds"), "points": p.get("best_score")}
+            done += c["solved"]; pts += c["points"] or 0; mx += c["max_points"]
+            chapters.append(c)
+        acts.append({"title": act["title"], "intro": act.get("intro", ""), "chapters": chapters})
+    nxt = next((c["slug"] for a in acts for c in a["chapters"] if not c.get("coming_soon") and not c["solved"]), None)
+    e = ENGINES[st["engine"]]
+    return {"id": st["id"], "title": st["title"], "subtitle": st.get("subtitle", ""), "engine": st["engine"],
+            "engine_name": f"{e['name']} {e['version']}", "color": e["color"], "intro": st.get("intro", ""),
+            "cast": st.get("cast", []), "acts": acts, "chapters": n, "solved": done, "points": pts, "max_points": mx,
+            "next": nxt}
+
+
+@app.get("/api/stories")
+def stories(request: Request):
+    u = current_user(request)
+    prog = store.progress_for(u["id"]) if u else {}
+    return [{k: v for k, v in story_view(st, prog).items() if k not in ("acts", "intro")} for st in STORIES.values()]
+
+
+@app.get("/api/stories/{sid}")
+def get_story(sid: str, request: Request):
+    if sid not in STORIES:
+        raise HTTPException(404, "no such story")
+    u = current_user(request)
+    return story_view(STORIES[sid], store.progress_for(u["id"]) if u else {})
 
 
 @app.get("/api/scenarios/{slug}")
@@ -232,7 +283,7 @@ def start_session(req: StartReq, u: dict = Depends(require_user)):
         if len(dk.containers.list(filters={"label": LABEL})) >= config.MAX_SESSIONS:
             raise HTTPException(429, f"all {config.MAX_SESSIONS} sandboxes are busy; try again in a few minutes")
         sid = secrets.token_hex(12)
-        expires = int(time.time()) + config.BOX_SECONDS
+        expires = int(time.time()) + box_seconds(SCENARIOS[req.slug])
         mem = labels.get("saddb.mem", "512m")
         store.start_attempt(u["id"], req.slug, sid, expires)
         ceiling = expires + config.MAX_EXTENSIONS * config.EXTEND_SECONDS   # label = hard max; DB holds the live expiry
@@ -281,7 +332,7 @@ def check_session(sid: str, u: dict = Depends(require_user)):
 
 @app.delete("/api/sessions/{sid}")
 def end_session(sid: str, u: dict = Depends(require_user)):
-    find(sid, u).remove(force=True)
+    find(sid, u).remove(force=True, v=True)
     store.end_attempt(sid, "ended")
     return {"ok": True}
 

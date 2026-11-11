@@ -1,0 +1,49 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "The replica is 20 minutes behind"
+difficulty = "medium"
+minutes = 20
+box_minutes = 20
+order = 6
+tags = ["mysql", "replication", "lag", "locks", "backups"]
+summary = "Reports show yesterday's numbers. The replica is falling further behind every second."
+narrative = """
+**Sam:** The finance dashboard (it reads from the replica) still shows this morning's sales. Is node2 OK?
+
+**Priya:** That dashboard is how we decide restocking for Black Friday. Find out why node2 is behind, get it
+caught up, and make sure whatever caused it doesn't come back tonight.
+"""
+description = """
+`node2` (3307) replicates from `node1` (3306), and its lag keeps growing. Orders keep arriving on node1.
+
+1. Get node2 **caught up** and keep it caught up (lag under 5 seconds), without stopping node1's traffic
+   and without restarting the servers.
+2. Make sure the cause **doesn't come back**: the nightly job on node2 must not block replication again.
+
+A heartbeat row (`bookstore.heartbeat`) is updated on node1 every second; on node2 it shows how far behind the
+replica really is: `node2 -e 'SELECT TIMESTAMPDIFF(SECOND, ts, NOW(6)) AS lag_s FROM bookstore.heartbeat'`.
+"""
+hints = [
+  "`node2 -e 'SHOW REPLICA STATUS\\\\G' | grep -E 'Running|Behind|State'`: what is the SQL thread *doing*?",
+  "Who else is on node2? `node2 -e 'SHOW PROCESSLIST'`. Look for long-running sessions and what they hold.",
+  "Something holds a global read lock (`FLUSH TABLES WITH READ LOCK`). `KILL` that session. Then look at whoever started it: `ls /srv/backup/`.",
+  "`mysqldump --lock-all-tables` takes a global read lock for the whole dump. For InnoDB, `--single-transaction` gives a consistent dump without blocking writers or replication.",
+]
+solution = """
+```sql
+-- node2
+SHOW REPLICA STATUS\\G          -- Replica_SQL_Running_State: Waiting for global read lock
+SHOW PROCESSLIST;               -- backup_agent, Query, 1000s: holds FLUSH TABLES WITH READ LOCK
+KILL <id of the backup_agent session>;
+```
+The applier catches up within seconds (the IO thread kept fetching the whole time; only applying was blocked).
+Then fix the job that did it, `/srv/backup/nightly.sh`:
+```bash
+-  mysqldump --lock-all-tables --all-databases ...
++  mysqldump --single-transaction --all-databases ...
+```
+**Lesson:** lag is usually not "the replica is slow": something is in its way. Read
+`Replica_SQL_Running_State`, then the processlist. Global read locks (FTWRL, `--lock-all-tables`, some backup
+tools on non-InnoDB tables), long transactions and metadata locks all stall the applier. Measure lag with a
+heartbeat (like `pt-heartbeat`): `Seconds_Behind_Source` can lie, especially when the IO thread is behind too.
+"""

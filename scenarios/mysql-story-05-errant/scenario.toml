@@ -1,0 +1,69 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "Replication broke at 3 a.m."
+difficulty = "hard"
+minutes = 30
+box_minutes = 30
+order = 5
+tags = ["mysql", "replication", "gtid", "errant transactions", "data drift"]
+summary = "Someone wrote to the replica. Replication stopped. Fix it properly: no skipped errors, no hidden drift."
+narrative = """
+**Sam (on-call), 03:12:** The replica alert is firing. `node2` says `Replica_SQL_Running: No`?
+
+**Marco, 08:40:** Oh no. Yesterday a customer's order was missing from the admin page, and the admin tool was
+pointed at node2… so I inserted it there by hand. Also fixed someone's email while I was at it. Sorry!!
+
+**Priya:** Don't just skip the error. I want node2 *identical* to node1 and replication healthy, with no
+leftovers that bite us at the next failover.
+"""
+description = """
+Replication from `node1` (3306) to `node2` (3307) has stopped.
+
+Get it healthy again, **properly**:
+
+1. Both replication threads running, caught up with node1.
+2. node2 holds **exactly** the same data as node1 in `bookstore` (all tables, every column).
+3. **No errant transactions**: node2's `gtid_executed` must be a subset of node1's. A replica with
+   transactions the source has never seen breaks the next failover.
+4. node2 is `super_read_only`, persistently, so this can't happen again.
+
+`node1` / `node2` are root clients. Don't rebuild node2 from scratch: fix it.
+"""
+hints = [
+  "`node2 -e 'SHOW REPLICA STATUS\\\\G'`: read `Last_SQL_Error`. Then compare the conflicting row on both servers.",
+  "Fix data on node2 **without writing new GTIDs**: `SET sql_log_bin = 0;` in that session first. Then `START REPLICA;`.",
+  "Marco changed more than one thing. `CHECKSUM TABLE bookstore.customers;` on both servers tells you whether a table differs.",
+  "Errant GTIDs: `SELECT GTID_SUBTRACT(@@gtid_executed, '<node1 gtid_executed>');` on node2 lists them. Either inject matching empty transactions on node1 (`SET GTID_NEXT='uuid:N'; BEGIN; COMMIT; SET GTID_NEXT=AUTOMATIC;`) or, once node2's data matches, reset node2's GTID history to node1's.",
+]
+solution = """
+```sql
+-- node2: what broke?
+SHOW REPLICA STATUS\\G      -- Error 'Duplicate entry '900001' for key 'orders.PRIMARY''
+-- Marco's hand-made order conflicts with the real one node1 later created with the same id.
+
+-- fix node2's data WITHOUT creating new GTIDs on it
+SET sql_log_bin = 0;
+DELETE FROM bookstore.orders WHERE id = 900001;              -- replication will bring node1's version
+UPDATE bookstore.customers SET email = 'reader777@mail.test' WHERE id = 777;   -- Marco's other "fix"
+SET sql_log_bin = 1;
+START REPLICA;
+
+-- errant GTIDs: transactions that exist only on node2 (Marco's two writes)
+SELECT GTID_SUBTRACT(@@gtid_executed, '<paste node1 @@gtid_executed>');   -- e.g. 3e1c…:1-2
+```
+```sql
+-- node1: "adopt" them as empty transactions, so node1's history includes them
+SET GTID_NEXT = '3e1c…:1'; BEGIN; COMMIT;
+SET GTID_NEXT = '3e1c…:2'; BEGIN; COMMIT;
+SET GTID_NEXT = AUTOMATIC;
+```
+```sql
+-- node2: never again
+SET PERSIST super_read_only = ON;
+CHECKSUM TABLE bookstore.orders, bookstore.customers;   -- on both: identical
+```
+**Lesson:** `SET GLOBAL sql_replica_skip_counter` or skipping a GTID "fixes" the error and leaves the data
+different: silent drift is worse than a stopped replica. Repair with `sql_log_bin=0`, verify with checksums
+(at scale: `pt-table-checksum`), and clean up errant GTIDs, because at failover a replica with errant
+transactions either can't be promoted cleanly or ships them to everyone. Make replicas `super_read_only`.
+"""

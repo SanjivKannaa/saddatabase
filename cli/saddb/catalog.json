@@ -45,7 +45,11 @@
     "Heap size is not total size. Compare `pg_relation_size()` with `pg_total_relation_size()`.",
     "`select oid::regclass, pg_size_pretty(pg_total_relation_size(oid)) from pg_class where relkind='r' and relnamespace::regnamespace::text not in ('pg_catalog','information_schema') order by pg_total_relation_size(oid) desc limit 5;`"
    ],
-   "solution": "`\\dt+` only lists `public`, where `audit_log` looks biggest. But there is an `archive` schema,\nand `archive.events` stores large values out of line in its **TOAST** table, which `\\dt+` and\n`pg_relation_size()` don't count.\n\n```sql\nselect oid::regclass as table,\n       pg_size_pretty(pg_relation_size(oid))        as heap,\n       pg_size_pretty(pg_total_relation_size(oid))  as total\nfrom pg_class\nwhere relkind = 'r'\n  and relnamespace::regnamespace::text not in ('pg_catalog','information_schema')\norder by pg_total_relation_size(oid) desc\nlimit 5;\n```\n```\necho archive.events > ~/solution\n```\n**Lesson:** \"table size\" means three things (heap, + indexes, + TOAST). Know which one you are quoting.\n"
+   "solution": "`\\dt+` only lists `public`, where `audit_log` looks biggest. But there is an `archive` schema,\nand `archive.events` stores large values out of line in its **TOAST** table, which `\\dt+` and\n`pg_relation_size()` don't count.\n\n```sql\nselect oid::regclass as table,\n       pg_size_pretty(pg_relation_size(oid))        as heap,\n       pg_size_pretty(pg_total_relation_size(oid))  as total\nfrom pg_class\nwhere relkind = 'r'\n  and relnamespace::regnamespace::text not in ('pg_catalog','information_schema')\norder by pg_total_relation_size(oid) desc\nlimit 5;\n```\n```\necho archive.events > ~/solution\n```\n**Lesson:** \"table size\" means three things (heap, + indexes, + TOAST). Know which one you are quoting.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-wont-start",
@@ -66,7 +70,11 @@
     "There is more than one problem. Fix one, try again, read the log again.",
     "Postgres is strict about who can read the data directory. Compare `ls -ld $PGDATA` with what the log says is allowed."
    ],
-   "solution": "Two problems, one at a time, each found in the log.\n\n1. `invalid value for parameter \"shared_buffers\": \"128MBB\"` — a typo in `postgresql.conf`.\n   ```\n   grep -n shared_buffers $PGDATA/postgresql.conf $PGDATA/postgresql.auto.conf\n   ```\n   It was set in **`postgresql.auto.conf`** (written by `ALTER SYSTEM`), which overrides `postgresql.conf`.\n   Fix the unit (`128MB`) or delete that line.\n2. `data directory \"/srv/pgdata\" has invalid permissions` — the restore left it `0755`.\n   ```\n   chmod 700 $PGDATA\n   ```\nThen `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start` and `psql -d inventory -c 'select count(*) from items'`.\n\n**Lesson:** read the log, fix one thing at a time, and remember `postgresql.auto.conf` wins over `postgresql.conf`.\n"
+   "solution": "Two problems, one at a time, each found in the log.\n\n1. `invalid value for parameter \"shared_buffers\": \"128MBB\"` — a typo in `postgresql.conf`.\n   ```\n   grep -n shared_buffers $PGDATA/postgresql.conf $PGDATA/postgresql.auto.conf\n   ```\n   It was set in **`postgresql.auto.conf`** (written by `ALTER SYSTEM`), which overrides `postgresql.conf`.\n   Fix the unit (`128MB`) or delete that line.\n2. `data directory \"/srv/pgdata\" has invalid permissions` — the restore left it `0755`.\n   ```\n   chmod 700 $PGDATA\n   ```\nThen `pg_ctl -D $PGDATA -l /var/log/postgresql/postgresql.log start` and `psql -d inventory -c 'select count(*) from items'`.\n\n**Lesson:** read the log, fix one thing at a time, and remember `postgresql.auto.conf` wins over `postgresql.conf`.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-locked-out",
@@ -89,7 +97,11 @@
     "Check the role itself: `\\\\du app` and `select rolcanlogin, rolvaliduntil from pg_roles where rolname='app';`",
     "Connecting is not the same as being allowed to read: `\\\\dp accounts`."
    ],
-   "solution": "Four independent locks, each surfaced by the next error message:\n\n1. **pg_hba.conf**: a `host billing app 127.0.0.1/32 reject` line sits *above* the scram line. First match wins.\n   Delete it, then `select pg_reload_conf();`.\n2. **Role can't log in**: `alter role app login;`\n3. **Password expired**: `alter role app valid until 'infinity';`\n   (Expired passwords give the same \"password authentication failed\" error as a wrong one. Check the server log.)\n4. **No privilege on the table**: `grant select on accounts to app;` (in database `billing`).\n\n**Lesson:** auth failures are layered: network rule → role attributes → password validity → object privileges.\nThe client error is often vague; the server log (`/var/log/postgresql/postgresql.log`) says what really happened.\n"
+   "solution": "Four independent locks, each surfaced by the next error message:\n\n1. **pg_hba.conf**: a `host billing app 127.0.0.1/32 reject` line sits *above* the scram line. First match wins.\n   Delete it, then `select pg_reload_conf();`.\n2. **Role can't log in**: `alter role app login;`\n3. **Password expired**: `alter role app valid until 'infinity';`\n   (Expired passwords give the same \"password authentication failed\" error as a wrong one. Check the server log.)\n4. **No privilege on the table**: `grant select on accounts to app;` (in database `billing`).\n\n**Lesson:** auth failures are layered: network rule → role attributes → password validity → object privileges.\nThe client error is often vague; the server log (`/var/log/postgresql/postgresql.log`) says what really happened.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-slow-query",
@@ -110,7 +122,11 @@
     "Look carefully at `\\\\d orders`. Is every index usable?",
     "An index that matches the WHERE *and* the ORDER BY lets Postgres stop after 20 rows."
    ],
-   "solution": "`\\d orders` shows `orders_customer_id_idx ... INVALID`: a `CREATE INDEX CONCURRENTLY` failed\nhalf-way and left an index the planner will never use (but every write still maintains it).\nThe only other index, on `status`, isn't selective enough, so Postgres reads ~1/4 of the table.\n\nFix: drop the broken index and build one that serves the whole query:\n```sql\ndrop index orders_customer_id_idx;\ncreate index concurrently orders_cust_status_created_idx\n  on orders (customer_id, status, created_at desc);\n```\n(`reindex index concurrently orders_customer_id_idx;` would also make the old one valid, and\nwork, but the composite index avoids the sort too.)\n\n**Lesson:** check for invalid indexes after any failed concurrent build:\n`select indexrelid::regclass from pg_index where not indisvalid;`\n"
+   "solution": "`\\d orders` shows `orders_customer_id_idx ... INVALID`: a `CREATE INDEX CONCURRENTLY` failed\nhalf-way and left an index the planner will never use (but every write still maintains it).\nThe only other index, on `status`, isn't selective enough, so Postgres reads ~1/4 of the table.\n\nFix: drop the broken index and build one that serves the whole query:\n```sql\ndrop index orders_customer_id_idx;\ncreate index concurrently orders_cust_status_created_idx\n  on orders (customer_id, status, created_at desc);\n```\n(`reindex index concurrently orders_customer_id_idx;` would also make the old one valid, and\nwork, but the composite index avoids the sort too.)\n\n**Lesson:** check for invalid indexes after any failed concurrent build:\n`select indexrelid::regclass from pg_index where not indisvalid;`\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-blocked-checkout",
@@ -131,7 +147,11 @@
     "`pg_blocking_pids(pid)` tells you who blocks whom.",
     "`pg_terminate_backend(pid)` ends a session. For part 2, look at `idle_in_transaction_session_timeout`, which can be set per role."
    ],
-   "solution": "`pg_stat_activity` shows a `nightly_report` session (role `reporting`) in state\n**idle in transaction** for ages: it updated `A-100` and never committed, so it holds the row lock.\nOther updates queue up behind it (`wait_event_type = Lock`).\n\n```sql\nselect pid, usename, application_name, state, pg_blocking_pids(pid) as blocked_by, query\nfrom pg_stat_activity where datname = 'store';\n\nselect pg_terminate_backend(pid) from pg_stat_activity\nwhere application_name = 'nightly_report';\n```\nPrevent it from coming back:\n```sql\nalter role reporting set idle_in_transaction_session_timeout = '60s';\n```\n(or `alter system set ...` + `select pg_reload_conf();` for everyone).\n\n**Lesson:** \"idle in transaction\" sessions hold locks and block vacuum. Always set a timeout.\n"
+   "solution": "`pg_stat_activity` shows a `nightly_report` session (role `reporting`) in state\n**idle in transaction** for ages: it updated `A-100` and never committed, so it holds the row lock.\nOther updates queue up behind it (`wait_event_type = Lock`).\n\n```sql\nselect pid, usename, application_name, state, pg_blocking_pids(pid) as blocked_by, query\nfrom pg_stat_activity where datname = 'store';\n\nselect pg_terminate_backend(pid) from pg_stat_activity\nwhere application_name = 'nightly_report';\n```\nPrevent it from coming back:\n```sql\nalter role reporting set idle_in_transaction_session_timeout = '60s';\n```\n(or `alter system set ...` + `select pg_reload_conf();` for everyone).\n\n**Lesson:** \"idle in transaction\" sessions hold locks and block vacuum. Always set a timeout.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-id-overflow",
@@ -153,7 +173,11 @@
     "`serial` means `integer`, and integers stop at 2,147,483,647. Both the column and the sequence have a type.",
     "Who else stores event ids? Look for foreign keys: `\\\\d event_tags`."
    ],
-   "solution": "`events.id` is a `serial`: an `integer` column fed by an `integer` sequence, and the sequence hit\n2147483647 (`nextval: reached maximum value of sequence`). Rows were inserted with big gaps, so the\ntable is small but the ids ran out.\n\nWiden everything that holds an event id:\n```sql\nalter table events alter column id type bigint;\nalter sequence events_id_seq as bigint;          -- max becomes 9223372036854775807\nalter table event_tags alter column event_id type bigint;\n```\nRestarting the sequence at 1 is **not** a fix: you'd hit the same wall (and the old ids) again.\n\n**Lesson:** use `bigint` / `bigserial` (or `bigint generated always as identity`) for ids.\nOn a big production table, `alter column type` rewrites the table under an exclusive lock, so plan for it\n(new column + backfill, or a tool like pg-osc). Monitor sequence headroom:\n`select seqrelid::regclass, last_value from pg_sequences ...`.\n"
+   "solution": "`events.id` is a `serial`: an `integer` column fed by an `integer` sequence, and the sequence hit\n2147483647 (`nextval: reached maximum value of sequence`). Rows were inserted with big gaps, so the\ntable is small but the ids ran out.\n\nWiden everything that holds an event id:\n```sql\nalter table events alter column id type bigint;\nalter sequence events_id_seq as bigint;          -- max becomes 9223372036854775807\nalter table event_tags alter column event_id type bigint;\n```\nRestarting the sequence at 1 is **not** a fix: you'd hit the same wall (and the old ids) again.\n\n**Lesson:** use `bigint` / `bigserial` (or `bigint generated always as identity`) for ids.\nOn a big production table, `alter column type` rewrites the table under an exclusive lock, so plan for it\n(new column + backfill, or a tool like pg-osc). Monitor sequence headroom:\n`select seqrelid::regclass, last_value from pg_sequences ...`.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "pg-too-many-connections",
@@ -174,7 +198,39 @@
     "Free the slots with `pg_terminate_backend()`.",
     "Limits can be set per role: look at `alter role ... connection limit`."
    ],
-   "solution": "`max_connections` is 15 and 3 slots are reserved for superusers, so 12 are usable, and a leaky\n`metrics-collector` holds all 12, idle. Hence `FATAL: remaining connection slots are reserved...`.\n\n```sql\nselect pg_terminate_backend(pid) from pg_stat_activity where usename = 'metrics';\nalter role metrics connection limit 5;\n```\nAlso worth doing: `alter role metrics set idle_session_timeout = '5min';` and, in real life,\na connection pooler (PgBouncer) in front of chatty apps.\n\n**Lesson:** `superuser_reserved_connections` is your emergency door; per-role connection limits keep\none tenant from starving the rest.\n"
+   "solution": "`max_connections` is 15 and 3 slots are reserved for superusers, so 12 are usable, and a leaky\n`metrics-collector` holds all 12, idle. Hence `FATAL: remaining connection slots are reserved...`.\n\n```sql\nselect pg_terminate_backend(pid) from pg_stat_activity where usename = 'metrics';\nalter role metrics connection limit 5;\n```\nAlso worth doing: `alter role metrics set idle_session_timeout = '5min';` and, in real life,\na connection pooler (PgBouncer) in front of chatty apps.\n\n**Lesson:** `superuser_reserved_connections` is your emergency door; per-role connection limits keep\none tenant from starving the rest.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
+   "slug": "mysql-story-01-install",
+   "engine": "mysql",
+   "title": "The empty server",
+   "difficulty": "medium",
+   "minutes": 25,
+   "order": 1,
+   "tags": [
+    "mysql",
+    "install",
+    "tarball",
+    "my.cnf",
+    "users"
+   ],
+   "summary": "Install MySQL 8.4 from the official tarball, configure it, secure it, and create the app's account.",
+   "description": "Install **MySQL 8.4.13 from the tarball** in `~/downloads` and get it ready for the bookstore app:\n\n1. Unpack it so the server binary is **`/opt/mysql/bin/mysqld`** (basedir `/opt/mysql`).\n2. Write **`/etc/my.cnf`** so a plain restart comes back the same: datadir **`/srv/mysql/data`**,\n   port 3306, **`bind-address = 127.0.0.1`**, socket `/var/run/mysqld/mysqld.sock`, error log `/var/log/mysql/error.log`.\n3. Initialise the data directory and **start** the server.\n4. Set the **root** password to the one in `~/README.md`.\n5. Create database **`bookstore`** and user **`'bookstore_app'@'localhost'`** (password in `~/README.md`)\n   with full rights on `bookstore` and **nothing else**.\n6. Put `/opt/mysql/bin` on your `PATH` (in `~/.bashrc`), so the next DBA isn't confused.\n\nThere is no system MySQL here: the tarball is all you have. You're the `mysql` OS user, and `/opt/mysql`,\n`/srv/mysql`, `/etc/my.cnf` and `/var/log/mysql` are yours.\n",
+   "hints": [
+    "Unpack with `tar -xJf ~/downloads/mysql-*.tar.xz -C /opt/mysql --strip-components=1`, then `ls /opt/mysql/bin`.",
+    "A minimal `/etc/my.cnf` has one `[mysqld]` section with `basedir`, `datadir`, `port`, `socket`, `bind-address` and `log-error`. Add a `[client]` section with the same `socket` so `mysql` finds the server.",
+    "`mysqld --defaults-file=/etc/my.cnf --initialize` creates the data dir and prints a **temporary root password** into the error log: `grep 'temporary password' /var/log/mysql/error.log`.",
+    "Start it with `mysqld --defaults-file=/etc/my.cnf --daemonize` (or `mysqld_safe --defaults-file=/etc/my.cnf &`). Then `mysql -uroot -p` with the temporary password and `ALTER USER 'root'@'localhost' IDENTIFIED BY '...';`"
+   ],
+   "solution": "```bash\ntar -xJf ~/downloads/mysql-8.4.13-linux-glibc2.28-x86_64-minimal.tar.xz -C /opt/mysql --strip-components=1\necho 'export PATH=/opt/mysql/bin:$PATH' >> ~/.bashrc && export PATH=/opt/mysql/bin:$PATH\n\ncat > /etc/my.cnf <<'CNF'\n[mysqld]\nbasedir      = /opt/mysql\ndatadir      = /srv/mysql/data\nport         = 3306\nsocket       = /var/run/mysqld/mysqld.sock\nbind-address = 127.0.0.1\nlog-error    = /var/log/mysql/error.log\n\n[client]\nsocket       = /var/run/mysqld/mysqld.sock\nCNF\n\nmysqld --defaults-file=/etc/my.cnf --initialize          # secure: random temporary root password\ngrep 'temporary password' /var/log/mysql/error.log\nmysqld --defaults-file=/etc/my.cnf --daemonize\n\nmysql -uroot -p --connect-expired-password <<'SQL'      # paste the temporary password\nALTER USER 'root'@'localhost' IDENTIFIED BY 'lb-root-7Qx2-tarball';\nCREATE DATABASE bookstore;\nCREATE USER 'bookstore_app'@'localhost' IDENTIFIED BY 'lb-app-9Fk3-orders';\nGRANT ALL ON bookstore.* TO 'bookstore_app'@'localhost';\nSQL\n```\n**Lesson:** a tarball install is just files, plus a couple of shared libraries the binaries need: on a\nreal server you'd first install `libaio` and `libnuma` (`dnf install libaio numactl-libs` / `apt install libaio1 libnuma1`),\nwhich this box already has. Beyond that, *you* own the layout (basedir, datadir, config, logs, socket).\n`--initialize` (not `--initialize-insecure`) gives root a one-time password; in production you'd also add a\n`mysql` system user and a systemd unit. Bind to localhost until you mean otherwise, and give apps a user scoped\nto their own schema, never root.\n",
+   "story": "mysql",
+   "chapter": 1,
+   "narrative": "**Priya (CTO):** Welcome aboard! 🎉 Here's your first server. Nothing on it yet, on purpose: I want MySQL\ninstalled *properly* this time, not `apt install` and hope. The official 8.4 tarball is already in\n`~/downloads`. Passwords and the details Marco needs are in `~/README.md`. Ping me when the app can log in.\n",
+   "box_minutes": 30
   },
   {
    "slug": "mysql-wont-start",
@@ -195,7 +251,11 @@
     "Where is mysqld trying to write its error log? Does that directory exist, and can you create it?",
     "Some server variables were **removed** in MySQL 8.0. An unknown variable stops the server cold."
    ],
-   "solution": "Two problems in `/etc/mysql/conf.d/legacy-tuning.cnf`:\n\n1. `log-error = /var/log/mysql-legacy/error.log`: that directory doesn't exist and you can't create it\n   under `/var/log`, so mysqld can't even open its log and dies printing to the terminal.\n   Delete the line (the main config already logs to `/var/log/mysql/error.log`).\n2. `query_cache_size` / `query_cache_type`: the query cache was **removed in MySQL 8.0**;\n   `unknown variable 'query_cache_size=64M'` aborts startup. Delete both lines.\n\n```\nnano /etc/mysql/conf.d/legacy-tuning.cnf\ndbctl start\nmysql -e 'select count(*) from inventory.items'\n```\n**Lesson:** after a major upgrade, diff your config against the removed-variables list, and\n`mysqld --validate-config` checks a config without starting the server.\n"
+   "solution": "Two problems in `/etc/mysql/conf.d/legacy-tuning.cnf`:\n\n1. `log-error = /var/log/mysql-legacy/error.log`: that directory doesn't exist and you can't create it\n   under `/var/log`, so mysqld can't even open its log and dies printing to the terminal.\n   Delete the line (the main config already logs to `/var/log/mysql/error.log`).\n2. `query_cache_size` / `query_cache_type`: the query cache was **removed in MySQL 8.0**;\n   `unknown variable 'query_cache_size=64M'` aborts startup. Delete both lines.\n\n```\nnano /etc/mysql/conf.d/legacy-tuning.cnf\ndbctl start\nmysql -e 'select count(*) from inventory.items'\n```\n**Lesson:** after a major upgrade, diff your config against the removed-variables list, and\n`mysqld --validate-config` checks a config without starting the server.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mysql-locked-out",
@@ -216,7 +276,66 @@
     "`select user, host, account_locked, password_expired from mysql.user where user='app';`",
     "`show grants for 'app'@'%';` What does `select current_role();` say when you're logged in as app?"
    ],
-   "solution": "Three layers:\n\n1. **Account locked** (`ERROR 3118 ... Account is locked`): `alter user 'app'@'%' account unlock;`\n2. **Password expired** (`ERROR 1820 ... You must reset your password`): an expired password can\n   only be cleared by setting it again. Keep the value the app uses:\n   `alter user 'app'@'%' identified by 'S4fe-pass';`\n   (`password expire never` changes the *policy*, not the flag that is already set.)\n3. **Role not active** (`SELECT command denied`): the privileges come from role `billing_reader`, which was\n   granted to `app` but is not a **default role**, so it's inactive after login.\n   `set default role billing_reader to 'app'@'%';`\n   (or set `activate_all_roles_on_login = ON` server-wide.)\n\n**Lesson:** MySQL 8 roles must be *active* to count. `show grants` lists the role, `current_role()` tells the truth.\n"
+   "solution": "Three layers:\n\n1. **Account locked** (`ERROR 3118 ... Account is locked`): `alter user 'app'@'%' account unlock;`\n2. **Password expired** (`ERROR 1820 ... You must reset your password`): an expired password can\n   only be cleared by setting it again. Keep the value the app uses:\n   `alter user 'app'@'%' identified by 'S4fe-pass';`\n   (`password expire never` changes the *policy*, not the flag that is already set.)\n3. **Role not active** (`SELECT command denied`): the privileges come from role `billing_reader`, which was\n   granted to `app` but is not a **default role**, so it's inactive after login.\n   `set default role billing_reader to 'app'@'%';`\n   (or set `activate_all_roles_on_login = ON` server-wide.)\n\n**Lesson:** MySQL 8 roles must be *active* to count. `show grants` lists the role, `current_role()` tells the truth.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
+   "slug": "mysql-story-02-compose",
+   "engine": "mysql",
+   "title": "Ship it in a container",
+   "difficulty": "easy",
+   "minutes": 20,
+   "order": 2,
+   "tags": [
+    "mysql",
+    "docker",
+    "compose",
+    "secrets",
+    "volumes"
+   ],
+   "summary": "Turn Marco's quick-and-dirty compose file into one you'd trust with real data.",
+   "description": "Fix **`~/deploy/compose.yaml`** until the reviewer approves it. The rules for a MySQL container we can trust:\n\n1. **Pinned image**: an exact `mysql:8.4.x` version (not `latest`, not just `8.4`).\n2. **Data on a named volume** mounted at `/var/lib/mysql`, declared under top-level `volumes:`.\n3. **No password in the file**: the root password comes from a Docker **secret** file\n   (`MYSQL_ROOT_PASSWORD_FILE`), and the secret file is readable by you only (`chmod 600`).\n4. **Only reachable from this machine**: publish port 3306 on `127.0.0.1` only.\n5. A **healthcheck** using `mysqladmin ping`.\n6. A **restart policy** (`unless-stopped` or `always`) and a **memory limit**.\n7. Tuning lives in `~/deploy/conf.d/*.cnf`, mounted **read-only** at `/etc/mysql/conf.d`.\n\nThere's no Docker daemon in this box (it's sandboxed), so the reviewer reads your YAML instead of running it.\nPress **Check** any time: it lists everything still wrong.\n",
+   "hints": [
+    "Run Check early: it lists all the problems. Fix them one by one.",
+    "Secrets in compose: a top-level `secrets: {mysql_root_password: {file: ./secrets/mysql_root_password}}`, the service lists `secrets: [mysql_root_password]`, and the env var points at `/run/secrets/mysql_root_password`.",
+    "Ports: `\"127.0.0.1:3306:3306\"`. And inside the container MySQL must listen on all interfaces, or Docker can't forward to it: look closely at Marco's `.cnf`."
+   ],
+   "solution": "```yaml\nservices:\n  mysql:\n    image: mysql:8.4.13\n    restart: unless-stopped\n    environment:\n      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password\n      MYSQL_DATABASE: bookstore\n    secrets: [mysql_root_password]\n    ports: [\"127.0.0.1:3306:3306\"]\n    volumes:\n      - mysql-data:/var/lib/mysql\n      - ./conf.d:/etc/mysql/conf.d:ro\n    healthcheck:\n      test: [\"CMD\", \"mysqladmin\", \"ping\", \"-h\", \"127.0.0.1\", \"--silent\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n    mem_limit: 1g\n\nvolumes:\n  mysql-data:\n\nsecrets:\n  mysql_root_password:\n    file: ./secrets/mysql_root_password\n```\n```bash\nmkdir -p ~/deploy/secrets && openssl rand -base64 24 > ~/deploy/secrets/mysql_root_password   # or any strong value\nchmod 600 ~/deploy/secrets/mysql_root_password\nsed -i '/bind-address/d' ~/deploy/conf.d/lumen.cnf\n```\n**Lesson:** containers make the *defaults* dangerous: `latest` changes under you, data in the container layer\ndies with it, env-var passwords leak through `docker inspect`, and `3306:3306` publishes on every interface.\nRestrict at the port mapping (`127.0.0.1:`), not with `bind-address` inside the container, which would make\nthe server unreachable through Docker's port forwarding.\n",
+   "story": "mysql",
+   "chapter": 2,
+   "narrative": "**Marco (backend):** Hey! I need a MySQL I can spin up for staging and on my laptop. I threw together a\n`compose.yaml` in `~/deploy` and it works on my machine™. Priya says you have to approve it before it goes\nanywhere near real data. Be gentle 😅\n",
+   "box_minutes": 20
+  },
+  {
+   "slug": "mysql-story-03-pitr",
+   "engine": "mysql",
+   "title": "The table that wasn't there",
+   "difficulty": "hard",
+   "minutes": 30,
+   "order": 3,
+   "tags": [
+    "mysql",
+    "backup",
+    "mysqldump",
+    "binlog",
+    "point-in-time recovery"
+   ],
+   "summary": "Someone dropped the orders table in production. Restore it to the second before it vanished.",
+   "description": "`bookstore.orders` was dropped this afternoon. The server (`node1`, port 3306) is up and customers are still\nbeing updated.\n\nRestore **`bookstore.orders` exactly as it was immediately before the `DROP`**: every order from last night's\nbackup **plus every order placed since**.\n\n**Don't touch `bookstore.customers`**: it already has changes made *after* the drop that must survive.\n\nWhat you have: the nightly dump in `/backups/`, and the binary logs in the data directory (`/srv/mysql/node1`).\n`mysqlbinlog` is installed. `mysql` logs you in as root.\n",
+   "hints": [
+    "The dump was taken with `--source-data=2`: `zcat /backups/*.sql.gz | grep -m1 'CHANGE REPLICATION SOURCE'` tells you the binlog file and position it corresponds to.",
+    "Find the DROP: `mysqlbinlog -v /srv/mysql/node1/binlog.0000NN | grep -n -i 'drop table'`, then look at the `# at NNN` line just before it. That's your stop position.",
+    "Don't restore the whole dump over `bookstore` (that would roll customers back). Restore it into a scratch database instead: strip the `CREATE DATABASE` / `USE` lines and `USE` your own.",
+    "`mysqlbinlog --rewrite-db='bookstore->scratch' --database=scratch --start-position=… --stop-position=… binlog.A binlog.B … | mysql` replays the day into the scratch copy. Careful: the rewrite happens *before* the `--database` filter, so the filter names the **new** database. Then move `orders` across."
+   ],
+   "solution": "```bash\ncd /srv/mysql/node1\nzcat /backups/bookstore-nightly.sql.gz | grep -m1 'CHANGE REPLICATION SOURCE'\n#   -- CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE='binlog.000003', SOURCE_LOG_POS=158;\nls binlog.0*                                           # 000003 .. 000006 matter: backup -> DROP\nfor b in binlog.0*; do mysqlbinlog $b | grep -qi 'drop table' && echo $b; done   # -> binlog.000006\nmysqlbinlog binlog.000006 | grep -n -i -B12 'drop table'   # the last \"# at NNN\" before the DROP = stop position\n\n# 1) the backup into a scratch database (not over bookstore!)\nmysql -e 'CREATE DATABASE restore_scratch'\nzcat /backups/bookstore-nightly.sql.gz | sed '/^CREATE DATABASE/d; s/^USE `bookstore`;/USE `restore_scratch`;/' | mysql\n\n# 2) replay everything from the backup position up to (not including) the DROP, into the scratch copy\nmysqlbinlog --rewrite-db='bookstore->restore_scratch' --database=restore_scratch \\\n  --start-position=158 --stop-position=<pos-of-DROP> binlog.000003 binlog.000004 binlog.000005 binlog.000006 | mysql\n\n# 3) put orders back\nmysql -e 'RENAME TABLE restore_scratch.orders TO bookstore.orders; DROP DATABASE restore_scratch'\n```\n`--start-position` applies to the first file, `--stop-position` to the last, and `--rewrite-db` is applied\n*before* `--database`, so the filter must name the rewritten database (filter on `bookstore` and you get nothing). The scratch copy also gets the\nreplayed customer changes, which is harmless because you only move `orders` across.\n\n**Lesson:** a dump alone loses everything since it was taken; *dump + binlogs* gets you to any second.\nTake dumps with `--single-transaction --source-data`, keep binlogs at least as long as your oldest backup, and\npractise this before you need it. Next time, test the restore first: `binlog_expire_logs_seconds` is not a backup policy.\n",
+   "story": "mysql",
+   "chapter": 3,
+   "narrative": "**Sam (support):** Checkout is throwing errors for everyone. \"Table 'bookstore.orders' doesn't exist\" 😱\n\n**Marco:** …that was me. I ran the cleanup migration against prod instead of staging. I'm so sorry.\n\n**Priya:** Breathe. We have last night's backup in `/backups`, and binary logging has been on since you set it up.\nGet every order back: **including the ones placed today**. And don't wipe out today's customer changes doing it.\n",
+   "box_minutes": 30
   },
   {
    "slug": "mysql-slow-query",
@@ -238,7 +357,11 @@
     "Compare the literal in the WHERE clause with the column's type: `show create table orders\\\\G`.",
     "When MySQL compares a string column to a number, it converts every row's value to a number first."
    ],
-   "solution": "`customer_ref` is a `VARCHAR`, but the query compares it to the **number** `4242`. MySQL then\nconverts each row's string to a number (`'04242'`, `'4242 '` and `'4242'` all equal 4242), so it\ncan't use the index: `type: ALL`, ~400k rows.\n\nSince every value is numeric, store it as a number:\n```sql\nALTER TABLE orders MODIFY customer_ref INT UNSIGNED NOT NULL;\n-- better still, let the index also serve the ORDER BY:\nALTER TABLE orders ADD INDEX idx_cust_created (customer_ref, created_at);\n```\n`EXPLAIN` now shows `type: ref`, `key: idx_cust_created`, ~40 rows.\n\n**Lesson:** implicit type conversion silently disables indexes. Match column types to how they're queried\n(also in JOINs: `INT` vs `VARCHAR`, different collations).\n"
+   "solution": "`customer_ref` is a `VARCHAR`, but the query compares it to the **number** `4242`. MySQL then\nconverts each row's string to a number (`'04242'`, `'4242 '` and `'4242'` all equal 4242), so it\ncan't use the index: `type: ALL`, ~400k rows.\n\nSince every value is numeric, store it as a number:\n```sql\nALTER TABLE orders MODIFY customer_ref INT UNSIGNED NOT NULL;\n-- better still, let the index also serve the ORDER BY:\nALTER TABLE orders ADD INDEX idx_cust_created (customer_ref, created_at);\n```\n`EXPLAIN` now shows `type: ref`, `key: idx_cust_created`, ~40 rows.\n\n**Lesson:** implicit type conversion silently disables indexes. Match column types to how they're queried\n(also in JOINs: `INT` vs `VARCHAR`, different collations).\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mysql-metadata-lock",
@@ -260,7 +383,177 @@
     "The ALTER is waiting too. For whom? Look at `sys.schema_table_lock_waits` or `performance_schema.metadata_locks`.",
     "A transaction that is *open but idle* holds its locks forever. `information_schema.innodb_trx` shows open transactions and their thread ids."
    ],
-   "solution": "`SHOW PROCESSLIST` shows the `ALTER` and every `SELECT` in state **Waiting for table metadata lock**.\n\nThe ALTER needs an exclusive metadata lock (MDL) on `products`. A `reporting` session ran\n`BEGIN; SELECT ... FROM products` and went idle **without committing**, so it holds a shared MDL. The ALTER\nqueues behind it, and every new query queues behind the ALTER.\n\n```sql\nselect * from sys.schema_table_lock_waits\\G         -- blocking_pid / sql_kill_blocking_connection\nselect trx_mysql_thread_id, trx_started from information_schema.innodb_trx;\nKILL <thread id of the idle reporting session>;\n```\nThe ALTER completes instantly and the SELECTs drain.\n\n**Lesson:** run migrations with a short `lock_wait_timeout` (e.g. `SET SESSION lock_wait_timeout = 5`) and retry,\nso a migration fails fast instead of freezing the site. Hunt down idle open transactions.\n"
+   "solution": "`SHOW PROCESSLIST` shows the `ALTER` and every `SELECT` in state **Waiting for table metadata lock**.\n\nThe ALTER needs an exclusive metadata lock (MDL) on `products`. A `reporting` session ran\n`BEGIN; SELECT ... FROM products` and went idle **without committing**, so it holds a shared MDL. The ALTER\nqueues behind it, and every new query queues behind the ALTER.\n\n```sql\nselect * from sys.schema_table_lock_waits\\G         -- blocking_pid / sql_kill_blocking_connection\nselect trx_mysql_thread_id, trx_started from information_schema.innodb_trx;\nKILL <thread id of the idle reporting session>;\n```\nThe ALTER completes instantly and the SELECTs drain.\n\n**Lesson:** run migrations with a short `lock_wait_timeout` (e.g. `SET SESSION lock_wait_timeout = 5`) and retry,\nso a migration fails fast instead of freezing the site. Hunt down idle open transactions.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  },
+  {
+   "slug": "mysql-story-04-replication",
+   "engine": "mysql",
+   "title": "A second copy",
+   "difficulty": "hard",
+   "minutes": 35,
+   "order": 4,
+   "tags": [
+    "mysql",
+    "replication",
+    "gtid",
+    "mysqldump"
+   ],
+   "summary": "Turn node2 into a live GTID replica of node1, while orders keep coming in.",
+   "description": "Make **`node2`** (port 3307) a live replica of **`node1`** (port 3306, `bookstore` with live traffic).\n\n1. Replicate with **GTID auto-positioning**, using a **dedicated replication user** (not root).\n2. **Seed** node2 with node1's `bookstore` data, consistently, while writes continue.\n3. node2 must be **read-only for everyone** (including root), and stay that way after a restart.\n4. Both servers keep running; don't stop the writes on node1.\n\n`node1` / `node2` open a root client on each; `dbctl status` / `dbctl restart node2`; configs are in\n`/etc/mysql/nodes/`. The grader writes on node1 and expects to see it on node2 within seconds.\n",
+   "hints": [
+    "Compare `/etc/mysql/nodes/node1.cnf` and `node2.cnf`. Two servers in one topology can't share a `server_id`, and GTID auto-positioning needs `gtid_mode=ON` + `enforce_gtid_consistency=ON` on both.",
+    "Seed with `mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2`. The dump sets `GTID_PURGED`, which only works on a replica with an empty GTID history: `RESET BINARY LOGS AND GTIDS` on node2 first.",
+    "If the replica's IO thread fails with *Authentication requires secure connection*: MySQL 8's default auth plugin needs TLS or the source's public key. Add `GET_SOURCE_PUBLIC_KEY=1` to `CHANGE REPLICATION SOURCE TO`.",
+    "Read-only for root too: `super_read_only`. `SET PERSIST` (or the .cnf) makes it survive a restart."
+   ],
+   "solution": "```bash\n# 1. a replication user on the source\nnode1 -e \"CREATE USER 'repl'@'127.0.0.1' IDENTIFIED BY 'Repl-Lumen-2026'; GRANT REPLICATION SLAVE ON *.* TO 'repl'@'127.0.0.1';\"\n\n# 2. fix node2's config: unique server_id, GTIDs on\nsed -i 's/^server_id .*/server_id = 2/; /^gtid_mode/d; /^enforce_gtid_consistency/d' /etc/mysql/nodes/node2.cnf\nprintf 'gtid_mode = ON\\nenforce_gtid_consistency = ON\\n' >> /etc/mysql/nodes/node2.cnf\ndbctl restart node2\n\n# 3. seed: a consistent snapshot that carries its GTID position\nnode2 -e \"RESET BINARY LOGS AND GTIDS\"\nmysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2\n\n# 4. replicate, then lock it down\nnode2 <<'SQL'\nCHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=3306,\n  SOURCE_USER='repl', SOURCE_PASSWORD='Repl-Lumen-2026', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1;\nSTART REPLICA;\nSET PERSIST super_read_only = ON;\nSQL\nnode2 -e 'SHOW REPLICA STATUS\\G' | grep -E 'Running:|Behind|Auto_Position'\n```\n**Lesson:** GTIDs make the replica's position part of the data: a dump with `--set-gtid-purged=ON` tells the\nreplica exactly which transactions it already has, so auto-positioning picks up the rest, with no binlog file\nand position to copy by hand. Give replication its own least-privilege user, give every server a unique\n`server_id`, and make replicas `super_read_only` so nobody \"just fixes something\" on the wrong server\n(spoiler: next chapter).\n",
+   "story": "mysql",
+   "chapter": 4,
+   "narrative": "**Priya:** After last week, I want a second copy of everything, live. We have one server, which means one bad\ndisk and we're closed. `node2` is installed but empty. Make it a **real replica** of `node1`, and the shop\nstays open while you do it: orders are coming in right now.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mysql-story-05-errant",
+   "engine": "mysql",
+   "title": "Replication broke at 3 a.m.",
+   "difficulty": "hard",
+   "minutes": 30,
+   "order": 5,
+   "tags": [
+    "mysql",
+    "replication",
+    "gtid",
+    "errant transactions",
+    "data drift"
+   ],
+   "summary": "Someone wrote to the replica. Replication stopped. Fix it properly: no skipped errors, no hidden drift.",
+   "description": "Replication from `node1` (3306) to `node2` (3307) has stopped.\n\nGet it healthy again, **properly**:\n\n1. Both replication threads running, caught up with node1.\n2. node2 holds **exactly** the same data as node1 in `bookstore` (all tables, every column).\n3. **No errant transactions**: node2's `gtid_executed` must be a subset of node1's. A replica with\n   transactions the source has never seen breaks the next failover.\n4. node2 is `super_read_only`, persistently, so this can't happen again.\n\n`node1` / `node2` are root clients. Don't rebuild node2 from scratch: fix it.\n",
+   "hints": [
+    "`node2 -e 'SHOW REPLICA STATUS\\\\G'`: read `Last_SQL_Error`. Then compare the conflicting row on both servers.",
+    "Fix data on node2 **without writing new GTIDs**: `SET sql_log_bin = 0;` in that session first. Then `START REPLICA;`.",
+    "Marco changed more than one thing. `CHECKSUM TABLE bookstore.customers;` on both servers tells you whether a table differs.",
+    "Errant GTIDs: `SELECT GTID_SUBTRACT(@@gtid_executed, '<node1 gtid_executed>');` on node2 lists them. Either inject matching empty transactions on node1 (`SET GTID_NEXT='uuid:N'; BEGIN; COMMIT; SET GTID_NEXT=AUTOMATIC;`) or, once node2's data matches, reset node2's GTID history to node1's."
+   ],
+   "solution": "```sql\n-- node2: what broke?\nSHOW REPLICA STATUS\\G      -- Error 'Duplicate entry '900001' for key 'orders.PRIMARY''\n-- Marco's hand-made order conflicts with the real one node1 later created with the same id.\n\n-- fix node2's data WITHOUT creating new GTIDs on it\nSET sql_log_bin = 0;\nDELETE FROM bookstore.orders WHERE id = 900001;              -- replication will bring node1's version\nUPDATE bookstore.customers SET email = 'reader777@mail.test' WHERE id = 777;   -- Marco's other \"fix\"\nSET sql_log_bin = 1;\nSTART REPLICA;\n\n-- errant GTIDs: transactions that exist only on node2 (Marco's two writes)\nSELECT GTID_SUBTRACT(@@gtid_executed, '<paste node1 @@gtid_executed>');   -- e.g. 3e1c…:1-2\n```\n```sql\n-- node1: \"adopt\" them as empty transactions, so node1's history includes them\nSET GTID_NEXT = '3e1c…:1'; BEGIN; COMMIT;\nSET GTID_NEXT = '3e1c…:2'; BEGIN; COMMIT;\nSET GTID_NEXT = AUTOMATIC;\n```\n```sql\n-- node2: never again\nSET PERSIST super_read_only = ON;\nCHECKSUM TABLE bookstore.orders, bookstore.customers;   -- on both: identical\n```\n**Lesson:** `SET GLOBAL sql_replica_skip_counter` or skipping a GTID \"fixes\" the error and leaves the data\ndifferent: silent drift is worse than a stopped replica. Repair with `sql_log_bin=0`, verify with checksums\n(at scale: `pt-table-checksum`), and clean up errant GTIDs, because at failover a replica with errant\ntransactions either can't be promoted cleanly or ships them to everyone. Make replicas `super_read_only`.\n",
+   "story": "mysql",
+   "chapter": 5,
+   "narrative": "**Sam (on-call), 03:12:** The replica alert is firing. `node2` says `Replica_SQL_Running: No`?\n\n**Marco, 08:40:** Oh no. Yesterday a customer's order was missing from the admin page, and the admin tool was\npointed at node2… so I inserted it there by hand. Also fixed someone's email while I was at it. Sorry!!\n\n**Priya:** Don't just skip the error. I want node2 *identical* to node1 and replication healthy, with no\nleftovers that bite us at the next failover.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mysql-story-06-lag",
+   "engine": "mysql",
+   "title": "The replica is 20 minutes behind",
+   "difficulty": "medium",
+   "minutes": 20,
+   "order": 6,
+   "tags": [
+    "mysql",
+    "replication",
+    "lag",
+    "locks",
+    "backups"
+   ],
+   "summary": "Reports show yesterday's numbers. The replica is falling further behind every second.",
+   "description": "`node2` (3307) replicates from `node1` (3306), and its lag keeps growing. Orders keep arriving on node1.\n\n1. Get node2 **caught up** and keep it caught up (lag under 5 seconds), without stopping node1's traffic\n   and without restarting the servers.\n2. Make sure the cause **doesn't come back**: the nightly job on node2 must not block replication again.\n\nA heartbeat row (`bookstore.heartbeat`) is updated on node1 every second; on node2 it shows how far behind the\nreplica really is: `node2 -e 'SELECT TIMESTAMPDIFF(SECOND, ts, NOW(6)) AS lag_s FROM bookstore.heartbeat'`.\n",
+   "hints": [
+    "`node2 -e 'SHOW REPLICA STATUS\\\\G' | grep -E 'Running|Behind|State'`: what is the SQL thread *doing*?",
+    "Who else is on node2? `node2 -e 'SHOW PROCESSLIST'`. Look for long-running sessions and what they hold.",
+    "Something holds a global read lock (`FLUSH TABLES WITH READ LOCK`). `KILL` that session. Then look at whoever started it: `ls /srv/backup/`.",
+    "`mysqldump --lock-all-tables` takes a global read lock for the whole dump. For InnoDB, `--single-transaction` gives a consistent dump without blocking writers or replication."
+   ],
+   "solution": "```sql\n-- node2\nSHOW REPLICA STATUS\\G          -- Replica_SQL_Running_State: Waiting for global read lock\nSHOW PROCESSLIST;               -- backup_agent, Query, 1000s: holds FLUSH TABLES WITH READ LOCK\nKILL <id of the backup_agent session>;\n```\nThe applier catches up within seconds (the IO thread kept fetching the whole time; only applying was blocked).\nThen fix the job that did it, `/srv/backup/nightly.sh`:\n```bash\n-  mysqldump --lock-all-tables --all-databases ...\n+  mysqldump --single-transaction --all-databases ...\n```\n**Lesson:** lag is usually not \"the replica is slow\": something is in its way. Read\n`Replica_SQL_Running_State`, then the processlist. Global read locks (FTWRL, `--lock-all-tables`, some backup\ntools on non-InnoDB tables), long transactions and metadata locks all stall the applier. Measure lag with a\nheartbeat (like `pt-heartbeat`): `Seconds_Behind_Source` can lie, especially when the IO thread is behind too.\n",
+   "story": "mysql",
+   "chapter": 6,
+   "narrative": "**Sam:** The finance dashboard (it reads from the replica) still shows this morning's sales. Is node2 OK?\n\n**Priya:** That dashboard is how we decide restocking for Black Friday. Find out why node2 is behind, get it\ncaught up, and make sure whatever caused it doesn't come back tonight.\n",
+   "box_minutes": 20
+  },
+  {
+   "slug": "mysql-story-07-failover",
+   "engine": "mysql",
+   "title": "The primary is dead",
+   "difficulty": "hard",
+   "minutes": 30,
+   "order": 7,
+   "tags": [
+    "mysql",
+    "failover",
+    "replication",
+    "gtid",
+    "high availability"
+   ],
+   "summary": "Black Friday, 09:14. The primary's disk is gone. Promote a replica without losing a single order.",
+   "description": "`node1` (3306), the primary, is **gone** and won't come back today. `node2` (3307) and `node3` (3308) were\nits replicas.\n\n1. **Promote** the replica that has **every transaction node1 committed**. Promoting the wrong one silently\n   loses orders.\n2. Make it a proper primary: **writable**, **not replicating** from anything, and still writable after a restart.\n3. Point the **other replica** at the new primary (GTID auto-positioning) so you still have a copy.\n4. Point the **app** at the new primary: `/srv/app/db.env`. The app retries every second, and orders should\n   start flowing again once it can write.\n\nReplication user: `repl` / `Repl-Lumen-2026`. `node2` / `node3` are root clients; `dbctl status` shows what's up.\n",
+   "hints": [
+    "Compare the replicas: `SHOW REPLICA STATUS\\\\G` on each, especially `Retrieved_Gtid_Set` and `Executed_Gtid_Set`. One has more of node1's transactions (same UUID, higher number).",
+    "On the winner: `STOP REPLICA; RESET REPLICA ALL;` (forget the dead source), then make it writable: `SET PERSIST super_read_only = OFF; SET PERSIST read_only = OFF;`.",
+    "On the other replica: `STOP REPLICA; CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=<new primary>, SOURCE_USER='repl', SOURCE_PASSWORD='…', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1; START REPLICA;`. Auto-positioning fetches whatever it's missing from its new source."
+   ],
+   "solution": "```sql\n-- which replica has more of node1's history?\n-- node2: Executed_Gtid_Set: 7b1e…:1-1068      node3: Executed_Gtid_Set: 7b1e…:1-1018\n-- node3 stopped fetching a few minutes before the crash. node2 has everything: promote node2.\n```\n```sql\n-- node2 becomes the primary\nSTOP REPLICA;\nRESET REPLICA ALL;\nSET PERSIST super_read_only = OFF;\nSET PERSIST read_only = OFF;\n```\n```sql\n-- node3 follows node2 and fetches the 50 transactions it was missing\nSTOP REPLICA;\nCHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=3307,\n  SOURCE_USER='repl', SOURCE_PASSWORD='Repl-Lumen-2026', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1;\nSTART REPLICA;\n```\n```bash\nsed -i 's/^DB_PORT=.*/DB_PORT=3307/' /srv/app/db.env      # the app reconnects within a second\n```\n**Lesson:** failover is a sequence: pick the most advanced replica (GTID sets make that a comparison, not a\nguess), detach it from the dead source, make it writable *persistently*, re-home the remaining replicas,\nthen move the traffic. Every step done by hand under pressure is a step you can get wrong, and doing it at 09:14\non Black Friday is exactly why the next chapter automates it.\n",
+   "story": "mysql",
+   "chapter": 7,
+   "narrative": "**Sam, 09:14:** EVERYTHING IS DOWN. Checkout fails, the app says it can't connect to the database.\n\n**Priya, 09:15:** I see it: node1's disk died. The hosting company says hours, maybe a day. We have two\nreplicas. You have the con: get us taking orders again, and **don't lose any**: the last minutes before the\ncrash were our busiest ever.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mysql-story-08-orchestrator",
+   "engine": "mysql",
+   "title": "Let the robot do it",
+   "difficulty": "hard",
+   "minutes": 40,
+   "order": 8,
+   "tags": [
+    "mysql",
+    "orchestrator",
+    "failover",
+    "high availability",
+    "automation"
+   ],
+   "summary": "Set up orchestrator so the next dead primary is handled in seconds, at 3 a.m., without you.",
+   "description": "Topology: **node1** (3306) primary, **node2** (3307) and **node3** (3308) replicas, GTID. The app writes to\nwhatever `/srv/app/db.env` says. orchestrator (Percona build, 3.2.6) is installed in `/usr/local/orchestrator`.\n\n1. Create a MySQL user for orchestrator with the privileges it needs to inspect and repair replication.\n2. Write **`/srv/orchestrator/orchestrator.conf.json`** (a sample sits next to it): SQLite backend in\n   `/srv/orchestrator`, your topology user, **automatic master recovery** for this cluster, promoted replicas\n   become **writable**, and a **hook** that points the app at the new primary (`DB_PORT` in `/srv/app/db.env`).\n3. Start it (`orcctl start`) and get orchestrator to see **all three nodes** in one cluster.\n4. Press **Check**: the grader checks orchestrator's view, then **kills node1**. Within 60 seconds,\n   orchestrator alone must promote a replica, re-home the other and run your hook, and orders keep flowing.\n\n`orchestrator-client` is set up (`ORCHESTRATOR_API` points at 127.0.0.1:3000): try `orchestrator-client -c topology -i 127.0.0.1:3306`.\n",
+   "hints": [
+    "User: orchestrator needs `SUPER, PROCESS, REPLICATION SLAVE, REPLICATION CLIENT, RELOAD ON *.*` and `SELECT ON mysql.slave_master_info`. Create it on node1: it replicates to the others.",
+    "Start from the sample, but trim it: `MySQLTopologyUser/Password`, `BackendDB: sqlite` + `SQLite3DataFile`, `ListenAddress: 127.0.0.1:3000`, `RecoverMasterClusterFilters: [\"*\"]`, `ApplyMySQLPromotionAfterMasterFailover: true`, short `InstancePollSeconds`.",
+    "All nodes are on 127.0.0.1, so orchestrator can't tell replicas apart by host in the processlist. Set `DiscoverByShowSlaveHosts: true` (replicas announce themselves with `report_host`/`report_port`) and `HostnameResolveMethod: none`. Then `orchestrator-client -c discover -i 127.0.0.1:3306`.",
+    "The hook: `\"PostMasterFailoverProcesses\": [\"sed -i 's/^DB_PORT=.*/DB_PORT={successorPort}/' /srv/app/db.env\"]`. `orcctl log` shows what orchestrator is thinking."
+   ],
+   "solution": "```sql\n-- node1 (replicates to node2 and node3)\nCREATE USER 'orc'@'127.0.0.1' IDENTIFIED BY 'Orc-Lumen-2026';\nGRANT SUPER, PROCESS, REPLICATION SLAVE, REPLICATION CLIENT, RELOAD ON *.* TO 'orc'@'127.0.0.1';\nGRANT SELECT ON mysql.slave_master_info TO 'orc'@'127.0.0.1';\n```\n```json\n{\n  \"ListenAddress\": \"127.0.0.1:3000\",\n  \"MySQLTopologyUser\": \"orc\",\n  \"MySQLTopologyPassword\": \"Orc-Lumen-2026\",\n  \"BackendDB\": \"sqlite\",\n  \"SQLite3DataFile\": \"/srv/orchestrator/orchestrator.sqlite3\",\n  \"DiscoverByShowSlaveHosts\": true,\n  \"HostnameResolveMethod\": \"none\",\n  \"MySQLHostnameResolveMethod\": \"\",\n  \"InstancePollSeconds\": 1,\n  \"RecoverMasterClusterFilters\": [\"*\"],\n  \"RecoverIntermediateMasterClusterFilters\": [\"*\"],\n  \"ApplyMySQLPromotionAfterMasterFailover\": true,\n  \"DelayMasterPromotionIfSQLThreadNotUpToDate\": true,\n  \"PostMasterFailoverProcesses\": [\"sed -i 's/^DB_PORT=.*/DB_PORT={successorPort}/' /srv/app/db.env\"]\n}\n```\n```bash\norcctl start\norchestrator-client -c discover -i 127.0.0.1:3306\norchestrator-client -c topology -i 127.0.0.1:3306      # 3306 with 3307 and 3308 under it\n```\nOn Check, node1 dies: orchestrator sees a **DeadMaster** (primary unreachable *and* its replicas agree),\npicks the most advanced replica, re-homes the other via GTID, sets `read_only=0` on the winner and runs the hook.\nThe whole thing takes a few seconds.\n\n**Lesson:** automated failover is only as good as its configuration *and its hooks*: promoting a replica is\npointless if the app keeps calling the dead one. In production you'd run orchestrator itself highly available\n(raft), use a proxy or DNS instead of `sed` on a file, persist `super_read_only=OFF` on the new primary, and\nrehearse it regularly: an untested failover is a hypothesis.\n",
+   "story": "mysql",
+   "chapter": 8,
+   "narrative": "**Priya:** Black Friday was heroic. It was also 40 minutes of you typing SQL with the whole company watching\nover your shoulder. Next time I want it handled in seconds, even at 3 a.m. Set up **orchestrator** on our\ntopology. And I want proof: we're going to pull the plug on the primary and watch.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mysql-story-09-ghost",
+   "engine": "mysql",
+   "title": "ALTER TABLE without the freeze",
+   "difficulty": "hard",
+   "minutes": 30,
+   "order": 9,
+   "tags": [
+    "mysql",
+    "gh-ost",
+    "online schema change",
+    "ddl"
+   ],
+   "summary": "Change a column on a big, busy table with gh-ost, without the shop freezing for a single second.",
+   "description": "`bookstore.books` on **node1** (3306) has 400k rows and the app updates it constantly. **node2** (3307) is its replica.\n\nChange **`books.isbn` from `CHAR(10)` to `VARCHAR(17) NOT NULL`** and **add an index on it**, with:\n\n1. **No stall**: the app's writes to `books` must never wait more than 5 seconds for a lock. A monitor records\n   every blocked write in `/var/log/app/stalls.log`.\n2. **No rows lost**, and the change reaches the replica too.\n3. **No leftovers**: no helper tables (`_books_gho`, `_books_ghc`, `_books_del`, …) in `bookstore`.\n\n`gh-ost` is installed (`gh-ost --help`). It connects over TCP, and `root` only exists for local socket logins,\nso give it its **own MySQL user**.\n",
+   "hints": [
+    "A plain `ALTER TABLE … MODIFY isbn VARCHAR(17)` has to copy the table, and blocks writes while it does. Try `ALTER … ALGORITHM=INPLACE, LOCK=NONE`: MySQL will tell you it can't. That's what gh-ost is for.",
+    "gh-ost connects over TCP as `user@127.0.0.1`, so create one (on node1, it replicates): `ALTER, CREATE, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON bookstore.*`, plus `SUPER, REPLICATION CLIENT, REPLICATION SLAVE ON *.*` and `SELECT ON performance_schema.*` (gh-ost checks metadata locks there before cutting over).",
+    "gh-ost reads the binlog from a replica by default: point it at node2 (`--host=127.0.0.1 --port=3307`) and it finds node1 by itself. Run it without `--execute` first: that's a dry run.",
+    "Useful flags: `--database bookstore --table books --alter \"MODIFY isbn VARCHAR(17) NOT NULL, ADD INDEX idx_isbn (isbn)\" --initially-drop-ghost-table --ok-to-drop-table --chunk-size=2000 --max-load=Threads_running=25 --critical-load=Threads_running=500 --cut-over-lock-timeout-seconds=2 --execute`.",
+    "`--ok-to-drop-table` lets gh-ost drop the old table after the cut-over, so nothing is left behind."
+   ],
+   "solution": "```sql\n-- node1: a user for gh-ost (it connects over TCP; root@localhost is socket-only)\nCREATE USER 'ghost'@'127.0.0.1' IDENTIFIED BY 'Ghost-Lumen-2026';\nGRANT ALTER, CREATE, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON bookstore.* TO 'ghost'@'127.0.0.1';\nGRANT SUPER, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'ghost'@'127.0.0.1';\nGRANT SELECT ON performance_schema.* TO 'ghost'@'127.0.0.1';\n```\n```bash\ngh-ost --host=127.0.0.1 --port=3307 --user=ghost --password='Ghost-Lumen-2026' \\\n  --database=bookstore --table=books \\\n  --alter=\"MODIFY isbn VARCHAR(17) NOT NULL, ADD INDEX idx_isbn (isbn)\" \\\n  --chunk-size=2000 --max-load=Threads_running=25 --critical-load=Threads_running=500 \\\n  --initially-drop-ghost-table --ok-to-drop-table --exact-rowcount --cut-over-lock-timeout-seconds=2 \\\n  --execute\n```\ngh-ost creates `_books_gho` with the new schema, copies rows in small chunks while **tailing the binlog** to\napply the app's concurrent changes, then cuts over with a brief atomic `RENAME`. The app never waits on a\nlong lock, and the change replicates like any other statement.\n\n**Lesson:** MySQL 8 does many changes `INSTANT` or `INPLACE` (adding a column is instant now), so check with\n`ALGORITHM=INSTANT`/`INPLACE, LOCK=NONE` first: MySQL refuses rather than locks. For changes that need a full\ncopy (type changes, charset conversions), use a triggerless online schema change tool like gh-ost (or\n`pt-online-schema-change`), throttle it on load and replica lag, and keep the cut-over boring.\n",
+   "story": "mysql",
+   "chapter": 9,
+   "narrative": "**Marco:** We're moving to ISBN-13. `books.isbn` is `CHAR(10)` and it needs to be `VARCHAR(17)` with an index.\nLast time I ran an `ALTER TABLE` on `books` the whole site froze for a minute and Sam got 200 emails.\n\n**Priya:** Not again. Do it **online**. Use gh-ost: it's on the box.\n",
+   "box_minutes": 30
   },
   {
    "slug": "mongo-wont-start",
@@ -282,7 +575,11 @@
     "YAML is picky about indentation. `cat -A /etc/mongodb/mongod.conf` shows tabs as `^I`.",
     "Where is the data actually? `ls /srv`. Pointing mongod at an empty directory would start it, with no data."
    ],
-   "solution": "Two problems in `/etc/mongodb/mongod.conf`:\n\n1. A **tab** used for indentation (`cat -A` shows `^I`). YAML forbids tabs, so mongod can't parse the file.\n   Replace it with spaces.\n2. `dbPath: /srv/mongodb`, but the data lives in **`/srv/mongo`**. Fix the path.\n   (Creating an empty directory would start a server with *no data*, which is worse than a server that's down.)\n\n```\ncat -A /etc/mongodb/mongod.conf | grep -n '\\^I'\nnano /etc/mongodb/mongod.conf\ndbctl start\nmongosh --quiet inventory --eval 'db.items.countDocuments()'\n```\n**Lesson:** read the startup error, and never \"fix\" a missing data dir by creating an empty one.\n"
+   "solution": "Two problems in `/etc/mongodb/mongod.conf`:\n\n1. A **tab** used for indentation (`cat -A` shows `^I`). YAML forbids tabs, so mongod can't parse the file.\n   Replace it with spaces.\n2. `dbPath: /srv/mongodb`, but the data lives in **`/srv/mongo`**. Fix the path.\n   (Creating an empty directory would start a server with *no data*, which is worse than a server that's down.)\n\n```\ncat -A /etc/mongodb/mongod.conf | grep -n '\\^I'\nnano /etc/mongodb/mongod.conf\ndbctl start\nmongosh --quiet inventory --eval 'db.items.countDocuments()'\n```\n**Lesson:** read the startup error, and never \"fix\" a missing data dir by creating an empty one.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mongo-slow-query",
@@ -303,7 +600,11 @@
     "Which indexes exist? `db.orders.getIndexes()`. Does any of them start with `customerId`?",
     "The ESR rule: put **E**quality fields first, then the **S**ort field, then **R**ange fields."
    ],
-   "solution": "The only indexes are on `status` and `createdAt`, so MongoDB either scans every `pending` order or walks\nthe whole `createdAt` index. Thousands of documents for 20 results, and possibly a blocking `SORT` stage.\n\nBuild an index that follows **ESR** (Equality, Sort, Range):\n```js\ndb.orders.createIndex({ customerId: 1, status: 1, createdAt: -1 })\n```\nNow the plan is `IXSCAN → FETCH → LIMIT`, no `SORT`, and `totalDocsExamined` is ≤ 20.\n\n**Lesson:** an index that matches both the filter and the sort lets the database stop early.\n"
+   "solution": "The only indexes are on `status` and `createdAt`, so MongoDB either scans every `pending` order or walks\nthe whole `createdAt` index. Thousands of documents for 20 results, and possibly a blocking `SORT` stage.\n\nBuild an index that follows **ESR** (Equality, Sort, Range):\n```js\ndb.orders.createIndex({ customerId: 1, status: 1, createdAt: -1 })\n```\nNow the plan is `IXSCAN → FETCH → LIMIT`, no `SORT`, and `totalDocsExamined` is ≤ 20.\n\n**Lesson:** an index that matches both the filter and the sort lets the database stop early.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mongo-auth",
@@ -324,7 +625,11 @@
     "Users live in a database. `use admin; db.getUsers()` then `use shop; db.getUsers()`.",
     "Reading isn't writing: compare the app's roles with what the command does."
    ],
-   "solution": "`app` was created in the **`admin`** database, but the app authenticates with `authSource=shop`,\nso MongoDB looks for `app` in `shop` and finds nothing (`Authentication failed`). And its role was\n`read`, while the app also inserts.\n\n```js\n// mongosh -u admin -p '...' --authenticationDatabase admin\nuse shop\ndb.createUser({ user: \"app\", pwd: \"Ap9-pass-2024\", roles: [{ role: \"readWrite\", db: \"shop\" }] })\nuse admin\ndb.dropUser(\"app\")      // tidy up the stray one\n```\n**Lesson:** a MongoDB user is identified by *name + authentication database*. `authSource` must point at the\ndatabase where the user was created.\n"
+   "solution": "`app` was created in the **`admin`** database, but the app authenticates with `authSource=shop`,\nso MongoDB looks for `app` in `shop` and finds nothing (`Authentication failed`). And its role was\n`read`, while the app also inserts.\n\n```js\n// mongosh -u admin -p '...' --authenticationDatabase admin\nuse shop\ndb.createUser({ user: \"app\", pwd: \"Ap9-pass-2024\", roles: [{ role: \"readWrite\", db: \"shop\" }] })\nuse admin\ndb.dropUser(\"app\")      // tidy up the stray one\n```\n**Lesson:** a MongoDB user is identified by *name + authentication database*. `authSource` must point at the\ndatabase where the user was created.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "mongo-duplicates",
@@ -346,7 +651,11 @@
     "Sort by `updatedAt` descending inside each group (`$sort` before `$group`, then `$push` the `_id`s): keep the first, delete the rest.",
     "A unique index enforces uniqueness. For case-insensitivity: either store emails lower-cased, or give the index a collation with `strength: 2`."
    ],
-   "solution": "```js\nuse app\nconst dups = db.users.aggregate([\n  { $sort: { updatedAt: -1 } },\n  { $group: { _id: { $toLower: \"$email\" }, ids: { $push: \"$_id\" }, n: { $sum: 1 } } },\n  { $match: { n: { $gt: 1 } } }\n]).toArray();\nlet gone = 0;\ndups.forEach(d => gone += db.users.deleteMany({ _id: { $in: d.ids.slice(1) } }).deletedCount);\ngone\n\n// Option A: unique, case-insensitive index (collation strength 2 ignores case)\ndb.users.createIndex({ email: 1 }, { unique: true, collation: { locale: \"en\", strength: 2 } })\n// Option B: normalise, then a plain unique index\n// db.users.updateMany({}, [{ $set: { email: { $toLower: \"$email\" } } }]); db.users.createIndex({ email: 1 }, { unique: true })\n```\n**Lesson:** an application-level \"check, then insert\" is a race. Uniqueness belongs in the database, as an index.\nNote that queries only use a collation index when they specify the same collation.\n"
+   "solution": "```js\nuse app\nconst dups = db.users.aggregate([\n  { $sort: { updatedAt: -1 } },\n  { $group: { _id: { $toLower: \"$email\" }, ids: { $push: \"$_id\" }, n: { $sum: 1 } } },\n  { $match: { n: { $gt: 1 } } }\n]).toArray();\nlet gone = 0;\ndups.forEach(d => gone += db.users.deleteMany({ _id: { $in: d.ids.slice(1) } }).deletedCount);\ngone\n\n// Option A: unique, case-insensitive index (collation strength 2 ignores case)\ndb.users.createIndex({ email: 1 }, { unique: true, collation: { locale: \"en\", strength: 2 } })\n// Option B: normalise, then a plain unique index\n// db.users.updateMany({}, [{ $set: { email: { $toLower: \"$email\" } } }]); db.users.createIndex({ email: 1 }, { unique: true })\n```\n**Lesson:** an application-level \"check, then insert\" is a race. Uniqueness belongs in the database, as an index.\nNote that queries only use a collation index when they specify the same collation.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "redis-aof-corrupt",
@@ -367,7 +676,11 @@
     "Since Redis 7 the AOF is a directory: `ls -la /srv/redis/appendonlydir/`. There's a manifest, a base file and an incremental file.",
     "`redis-check-aof` can repair it. Back up the directory first: `cp -a /srv/redis/appendonlydir ~/aof-backup`."
    ],
-   "solution": "The log says: `Bad file format reading the append only file appendonly.aof.1.incr.aof`.\nThe AOF has garbage in it, so Redis stops rather than load a possibly wrong dataset.\n\n```\ncp -a /srv/redis/appendonlydir ~/aof-backup      # always keep the original\nredis-check-aof --fix /srv/redis/appendonlydir/appendonly.aof.manifest\ndbctl start\nredis-cli dbsize                                 # ~9,950 of 10,000\n```\n`--fix` truncates the file at the first bad command, so everything after it is lost. Disabling\n`appendonly` would also \"start\" Redis, but with an empty or stale dataset.\n\n**Lesson:** `aof-load-truncated yes` (the default) only handles a cut-off *last* command; corruption in\nthe middle needs `redis-check-aof`. Back up before you repair.\n"
+   "solution": "The log says: `Bad file format reading the append only file appendonly.aof.1.incr.aof`.\nThe AOF has garbage in it, so Redis stops rather than load a possibly wrong dataset.\n\n```\ncp -a /srv/redis/appendonlydir ~/aof-backup      # always keep the original\nredis-check-aof --fix /srv/redis/appendonlydir/appendonly.aof.manifest\ndbctl start\nredis-cli dbsize                                 # ~9,950 of 10,000\n```\n`--fix` truncates the file at the first bad command, so everything after it is lost. Disabling\n`appendonly` would also \"start\" Redis, but with an empty or stale dataset.\n\n**Lesson:** `aof-load-truncated yes` (the default) only handles a cut-off *last* command; corruption in\nthe middle needs `redis-check-aof`. Back up before you repair.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "redis-oom",
@@ -389,7 +702,11 @@
     "What should a *cache* do when it's full? Read about `maxmemory-policy`. Do the cache keys have TTLs? (`redis-cli ttl cache:product:1`)",
     "`CONFIG SET` only changes the running server. `CONFIG REWRITE` (or editing `/etc/redis/redis.conf`) makes it stick."
    ],
-   "solution": "`maxmemory` is 40 MB with `maxmemory-policy noeviction`, and the cache holds more than that. With\n`noeviction`, Redis refuses writes when full instead of dropping old data.\n\nFor a cache, evict the least recently used keys. The `cache:*` keys have **no TTL**, so `volatile-lru`\n(which only evicts keys that have a TTL) wouldn't help: use `allkeys-lru` (or `allkeys-lfu`).\n\n```\nredis-cli config set maxmemory-policy allkeys-lru\nredis-cli config rewrite        # persist to /etc/redis/redis.conf\nredis-cli set cache:product:1 '{\"name\":\"lamp\"}'\n```\n**Lesson:** `noeviction` suits a primary datastore and `allkeys-*` suits a cache. Know which one your Redis is.\nSetting `maxmemory 0` would \"work\" until the kernel's OOM killer arrives.\n"
+   "solution": "`maxmemory` is 40 MB with `maxmemory-policy noeviction`, and the cache holds more than that. With\n`noeviction`, Redis refuses writes when full instead of dropping old data.\n\nFor a cache, evict the least recently used keys. The `cache:*` keys have **no TTL**, so `volatile-lru`\n(which only evicts keys that have a TTL) wouldn't help: use `allkeys-lru` (or `allkeys-lfu`).\n\n```\nredis-cli config set maxmemory-policy allkeys-lru\nredis-cli config rewrite        # persist to /etc/redis/redis.conf\nredis-cli set cache:product:1 '{\"name\":\"lamp\"}'\n```\n**Lesson:** `noeviction` suits a primary datastore and `allkeys-*` suits a cache. Know which one your Redis is.\nSetting `maxmemory 0` would \"work\" until the kernel's OOM killer arrives.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
   },
   {
    "slug": "redis-bigkey",
@@ -410,7 +727,78 @@
     "`MEMORY USAGE <key>` gives bytes. `redis-cli --memkeys` scans with it for you.",
     "The key with the most items is not necessarily the one using the most memory."
    ],
-   "solution": "`redis-cli --bigkeys` reports `queue:emails` (a list with 200,000 items) as the \"biggest\" list, which looks guilty.\nBut it's 200k *tiny* strings. Measure bytes instead:\n\n```\nredis-cli --memkeys            # samples every key with MEMORY USAGE\nredis-cli memory usage user:avatars\nredis-cli memory usage queue:emails\necho user:avatars > ~/solution\n```\n`user:avatars` is a hash of 1,500 inline images of ~4 KB each, about 6 MB.\n\n**Lesson:** element count ≠ memory. `--memkeys` / `MEMORY USAGE` measure bytes, and `SCAN`-based tools\ndon't block the server the way `KEYS *` does.\n"
+   "solution": "`redis-cli --bigkeys` reports `queue:emails` (a list with 200,000 items) as the \"biggest\" list, which looks guilty.\nBut it's 200k *tiny* strings. Measure bytes instead:\n\n```\nredis-cli --memkeys            # samples every key with MEMORY USAGE\nredis-cli memory usage user:avatars\nredis-cli memory usage queue:emails\necho user:avatars > ~/solution\n```\n`user:avatars` is a hash of 1,500 inline images of ~4 KB each, about 6 MB.\n\n**Lesson:** element count ≠ memory. `--memkeys` / `MEMORY USAGE` measure bytes, and `SCAN`-based tools\ndon't block the server the way `KEYS *` does.\n",
+   "story": null,
+   "chapter": null,
+   "narrative": null,
+   "box_minutes": null
+  }
+ ],
+ "stories": [
+  {
+   "id": "mysql",
+   "engine": "mysql",
+   "title": "Lumen Books",
+   "subtitle": "A MySQL story: from an empty server to zero-downtime migrations",
+   "intro": "**Lumen Books** sells used and rare books online. Twelve people, forty thousand customers, and a\ndatabase that Marco installed on his laptop three years ago and copied to a VM \"temporarily\".\n\nBlack Friday is in six weeks. Priya, the CTO, has finally hired a DBA. That's you.\n\nOver the next weeks you'll build their MySQL setup properly: install it, containerise it, back it up,\nreplicate it, survive losing a server, automate failover and change big tables without taking the\nshop down. Every chapter is a real box with real MySQL: you do the work, the grader checks it.\n",
+   "cast": [
+    {
+     "name": "Priya",
+     "role": "CTO",
+     "avatar": "🧭"
+    },
+    {
+     "name": "Marco",
+     "role": "Backend developer",
+     "avatar": "🛠️"
+    },
+    {
+     "name": "Sam",
+     "role": "Support & on-call",
+     "avatar": "📟"
+    }
+   ],
+   "acts": [
+    {
+     "title": "Act I · Day one",
+     "intro": "Priya hands you a fresh server and a laptop sticker. Time to replace the laptop-era database.",
+     "chapters": [
+      "mysql-story-01-install",
+      "mysql-story-02-compose"
+     ]
+    },
+    {
+     "title": "Act II · Don't lose the data",
+     "intro": "Nobody has ever restored a backup at Lumen Books. That is about to change, the hard way.",
+     "chapters": [
+      "mysql-story-03-pitr"
+     ]
+    },
+    {
+     "title": "Act III · A second copy",
+     "intro": "One server is one bad disk away from closing the shop. You add a replica, and learn what can go wrong with it.",
+     "chapters": [
+      "mysql-story-04-replication",
+      "mysql-story-05-errant",
+      "mysql-story-06-lag"
+     ]
+    },
+    {
+     "title": "Act IV · When the primary dies",
+     "intro": "Black Friday traffic, a dead server, and nobody awake but you. First by hand, then with orchestrator.",
+     "chapters": [
+      "mysql-story-07-failover",
+      "mysql-story-08-orchestrator"
+     ]
+    },
+    {
+     "title": "Act V · Change without downtime",
+     "intro": "The catalogue needs a new column. The table has millions of rows and the shop can't stop.",
+     "chapters": [
+      "mysql-story-09-ghost"
+     ]
+    }
+   ]
   }
  ]
 }

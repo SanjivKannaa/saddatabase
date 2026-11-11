@@ -13,6 +13,6 @@ for s in ${@:-$(ls scenarios)}; do
   docker exec -i -u "$(label $s user)" -w "$(label $s home)" "$c" bash -l < tests/fixes/$s.sh >/dev/null 2>&1
   if out=$(docker exec "$c" /opt/sad/check.sh 2>&1); then echo "✓ $s fixed: $(echo "$out" | tail -1)"
   else echo "✗ $s still failing after fix: $out"; rc=1; fi
-  docker rm -f "$c" >/dev/null
+  docker rm -fv "$c" >/dev/null
 done
 exit $rc

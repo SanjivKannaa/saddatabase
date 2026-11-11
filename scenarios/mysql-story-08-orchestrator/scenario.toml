@@ -1,0 +1,73 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "Let the robot do it"
+difficulty = "hard"
+minutes = 40
+box_minutes = 30
+order = 8
+tags = ["mysql", "orchestrator", "failover", "high availability", "automation"]
+summary = "Set up orchestrator so the next dead primary is handled in seconds, at 3 a.m., without you."
+narrative = """
+**Priya:** Black Friday was heroic. It was also 40 minutes of you typing SQL with the whole company watching
+over your shoulder. Next time I want it handled in seconds, even at 3 a.m. Set up **orchestrator** on our
+topology. And I want proof: we're going to pull the plug on the primary and watch.
+"""
+description = """
+Topology: **node1** (3306) primary, **node2** (3307) and **node3** (3308) replicas, GTID. The app writes to
+whatever `/srv/app/db.env` says. orchestrator (Percona build, 3.2.6) is installed in `/usr/local/orchestrator`.
+
+1. Create a MySQL user for orchestrator with the privileges it needs to inspect and repair replication.
+2. Write **`/srv/orchestrator/orchestrator.conf.json`** (a sample sits next to it): SQLite backend in
+   `/srv/orchestrator`, your topology user, **automatic master recovery** for this cluster, promoted replicas
+   become **writable**, and a **hook** that points the app at the new primary (`DB_PORT` in `/srv/app/db.env`).
+3. Start it (`orcctl start`) and get orchestrator to see **all three nodes** in one cluster.
+4. Press **Check**: the grader checks orchestrator's view, then **kills node1**. Within 60 seconds,
+   orchestrator alone must promote a replica, re-home the other and run your hook, and orders keep flowing.
+
+`orchestrator-client` is set up (`ORCHESTRATOR_API` points at 127.0.0.1:3000): try `orchestrator-client -c topology -i 127.0.0.1:3306`.
+"""
+hints = [
+  "User: orchestrator needs `SUPER, PROCESS, REPLICATION SLAVE, REPLICATION CLIENT, RELOAD ON *.*` and `SELECT ON mysql.slave_master_info`. Create it on node1: it replicates to the others.",
+  "Start from the sample, but trim it: `MySQLTopologyUser/Password`, `BackendDB: sqlite` + `SQLite3DataFile`, `ListenAddress: 127.0.0.1:3000`, `RecoverMasterClusterFilters: [\"*\"]`, `ApplyMySQLPromotionAfterMasterFailover: true`, short `InstancePollSeconds`.",
+  "All nodes are on 127.0.0.1, so orchestrator can't tell replicas apart by host in the processlist. Set `DiscoverByShowSlaveHosts: true` (replicas announce themselves with `report_host`/`report_port`) and `HostnameResolveMethod: none`. Then `orchestrator-client -c discover -i 127.0.0.1:3306`.",
+  "The hook: `\"PostMasterFailoverProcesses\": [\"sed -i 's/^DB_PORT=.*/DB_PORT={successorPort}/' /srv/app/db.env\"]`. `orcctl log` shows what orchestrator is thinking.",
+]
+solution = """
+```sql
+-- node1 (replicates to node2 and node3)
+CREATE USER 'orc'@'127.0.0.1' IDENTIFIED BY 'Orc-Lumen-2026';
+GRANT SUPER, PROCESS, REPLICATION SLAVE, REPLICATION CLIENT, RELOAD ON *.* TO 'orc'@'127.0.0.1';
+GRANT SELECT ON mysql.slave_master_info TO 'orc'@'127.0.0.1';
+```
+```json
+{
+  "ListenAddress": "127.0.0.1:3000",
+  "MySQLTopologyUser": "orc",
+  "MySQLTopologyPassword": "Orc-Lumen-2026",
+  "BackendDB": "sqlite",
+  "SQLite3DataFile": "/srv/orchestrator/orchestrator.sqlite3",
+  "DiscoverByShowSlaveHosts": true,
+  "HostnameResolveMethod": "none",
+  "MySQLHostnameResolveMethod": "",
+  "InstancePollSeconds": 1,
+  "RecoverMasterClusterFilters": ["*"],
+  "RecoverIntermediateMasterClusterFilters": ["*"],
+  "ApplyMySQLPromotionAfterMasterFailover": true,
+  "DelayMasterPromotionIfSQLThreadNotUpToDate": true,
+  "PostMasterFailoverProcesses": ["sed -i 's/^DB_PORT=.*/DB_PORT={successorPort}/' /srv/app/db.env"]
+}
+```
+```bash
+orcctl start
+orchestrator-client -c discover -i 127.0.0.1:3306
+orchestrator-client -c topology -i 127.0.0.1:3306      # 3306 with 3307 and 3308 under it
+```
+On Check, node1 dies: orchestrator sees a **DeadMaster** (primary unreachable *and* its replicas agree),
+picks the most advanced replica, re-homes the other via GTID, sets `read_only=0` on the winner and runs the hook.
+The whole thing takes a few seconds.
+
+**Lesson:** automated failover is only as good as its configuration *and its hooks*: promoting a replica is
+pointless if the app keeps calling the dead one. In production you'd run orchestrator itself highly available
+(raft), use a proxy or DNS instead of `sed` on a file, persist `super_read_only=OFF` on the new primary, and
+rehearse it regularly: an untested failover is a hypothesis.
+"""

@@ -1,0 +1,71 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "The empty server"
+difficulty = "medium"
+minutes = 25
+box_minutes = 30
+order = 1
+tags = ["mysql", "install", "tarball", "my.cnf", "users"]
+summary = "Install MySQL 8.4 from the official tarball, configure it, secure it, and create the app's account."
+narrative = """
+**Priya (CTO):** Welcome aboard! 🎉 Here's your first server. Nothing on it yet, on purpose: I want MySQL
+installed *properly* this time, not `apt install` and hope. The official 8.4 tarball is already in
+`~/downloads`. Passwords and the details Marco needs are in `~/README.md`. Ping me when the app can log in.
+"""
+description = """
+Install **MySQL 8.4.13 from the tarball** in `~/downloads` and get it ready for the bookstore app:
+
+1. Unpack it so the server binary is **`/opt/mysql/bin/mysqld`** (basedir `/opt/mysql`).
+2. Write **`/etc/my.cnf`** so a plain restart comes back the same: datadir **`/srv/mysql/data`**,
+   port 3306, **`bind-address = 127.0.0.1`**, socket `/var/run/mysqld/mysqld.sock`, error log `/var/log/mysql/error.log`.
+3. Initialise the data directory and **start** the server.
+4. Set the **root** password to the one in `~/README.md`.
+5. Create database **`bookstore`** and user **`'bookstore_app'@'localhost'`** (password in `~/README.md`)
+   with full rights on `bookstore` and **nothing else**.
+6. Put `/opt/mysql/bin` on your `PATH` (in `~/.bashrc`), so the next DBA isn't confused.
+
+There is no system MySQL here: the tarball is all you have. You're the `mysql` OS user, and `/opt/mysql`,
+`/srv/mysql`, `/etc/my.cnf` and `/var/log/mysql` are yours.
+"""
+hints = [
+  "Unpack with `tar -xJf ~/downloads/mysql-*.tar.xz -C /opt/mysql --strip-components=1`, then `ls /opt/mysql/bin`.",
+  "A minimal `/etc/my.cnf` has one `[mysqld]` section with `basedir`, `datadir`, `port`, `socket`, `bind-address` and `log-error`. Add a `[client]` section with the same `socket` so `mysql` finds the server.",
+  "`mysqld --defaults-file=/etc/my.cnf --initialize` creates the data dir and prints a **temporary root password** into the error log: `grep 'temporary password' /var/log/mysql/error.log`.",
+  "Start it with `mysqld --defaults-file=/etc/my.cnf --daemonize` (or `mysqld_safe --defaults-file=/etc/my.cnf &`). Then `mysql -uroot -p` with the temporary password and `ALTER USER 'root'@'localhost' IDENTIFIED BY '...';`",
+]
+solution = """
+```bash
+tar -xJf ~/downloads/mysql-8.4.13-linux-glibc2.28-x86_64-minimal.tar.xz -C /opt/mysql --strip-components=1
+echo 'export PATH=/opt/mysql/bin:$PATH' >> ~/.bashrc && export PATH=/opt/mysql/bin:$PATH
+
+cat > /etc/my.cnf <<'CNF'
+[mysqld]
+basedir      = /opt/mysql
+datadir      = /srv/mysql/data
+port         = 3306
+socket       = /var/run/mysqld/mysqld.sock
+bind-address = 127.0.0.1
+log-error    = /var/log/mysql/error.log
+
+[client]
+socket       = /var/run/mysqld/mysqld.sock
+CNF
+
+mysqld --defaults-file=/etc/my.cnf --initialize          # secure: random temporary root password
+grep 'temporary password' /var/log/mysql/error.log
+mysqld --defaults-file=/etc/my.cnf --daemonize
+
+mysql -uroot -p --connect-expired-password <<'SQL'      # paste the temporary password
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'lb-root-7Qx2-tarball';
+CREATE DATABASE bookstore;
+CREATE USER 'bookstore_app'@'localhost' IDENTIFIED BY 'lb-app-9Fk3-orders';
+GRANT ALL ON bookstore.* TO 'bookstore_app'@'localhost';
+SQL
+```
+**Lesson:** a tarball install is just files, plus a couple of shared libraries the binaries need: on a
+real server you'd first install `libaio` and `libnuma` (`dnf install libaio numactl-libs` / `apt install libaio1 libnuma1`),
+which this box already has. Beyond that, *you* own the layout (basedir, datadir, config, logs, socket).
+`--initialize` (not `--initialize-insecure`) gives root a one-time password; in production you'd also add a
+`mysql` system user and a systemd unit. Bind to localhost until you mean otherwise, and give apps a user scoped
+to their own schema, never root.
+"""

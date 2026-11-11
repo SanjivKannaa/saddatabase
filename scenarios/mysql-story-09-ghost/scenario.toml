@@ -1,0 +1,60 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "ALTER TABLE without the freeze"
+difficulty = "hard"
+minutes = 30
+box_minutes = 30
+order = 9
+tags = ["mysql", "gh-ost", "online schema change", "ddl"]
+summary = "Change a column on a big, busy table with gh-ost, without the shop freezing for a single second."
+narrative = """
+**Marco:** We're moving to ISBN-13. `books.isbn` is `CHAR(10)` and it needs to be `VARCHAR(17)` with an index.
+Last time I ran an `ALTER TABLE` on `books` the whole site froze for a minute and Sam got 200 emails.
+
+**Priya:** Not again. Do it **online**. Use gh-ost: it's on the box.
+"""
+description = """
+`bookstore.books` on **node1** (3306) has 400k rows and the app updates it constantly. **node2** (3307) is its replica.
+
+Change **`books.isbn` from `CHAR(10)` to `VARCHAR(17) NOT NULL`** and **add an index on it**, with:
+
+1. **No stall**: the app's writes to `books` must never wait more than 5 seconds for a lock. A monitor records
+   every blocked write in `/var/log/app/stalls.log`.
+2. **No rows lost**, and the change reaches the replica too.
+3. **No leftovers**: no helper tables (`_books_gho`, `_books_ghc`, `_books_del`, …) in `bookstore`.
+
+`gh-ost` is installed (`gh-ost --help`). It connects over TCP, and `root` only exists for local socket logins,
+so give it its **own MySQL user**.
+"""
+hints = [
+  "A plain `ALTER TABLE … MODIFY isbn VARCHAR(17)` has to copy the table, and blocks writes while it does. Try `ALTER … ALGORITHM=INPLACE, LOCK=NONE`: MySQL will tell you it can't. That's what gh-ost is for.",
+  "gh-ost connects over TCP as `user@127.0.0.1`, so create one (on node1, it replicates): `ALTER, CREATE, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON bookstore.*`, plus `SUPER, REPLICATION CLIENT, REPLICATION SLAVE ON *.*` and `SELECT ON performance_schema.*` (gh-ost checks metadata locks there before cutting over).",
+  "gh-ost reads the binlog from a replica by default: point it at node2 (`--host=127.0.0.1 --port=3307`) and it finds node1 by itself. Run it without `--execute` first: that's a dry run.",
+  "Useful flags: `--database bookstore --table books --alter \"MODIFY isbn VARCHAR(17) NOT NULL, ADD INDEX idx_isbn (isbn)\" --initially-drop-ghost-table --ok-to-drop-table --chunk-size=2000 --max-load=Threads_running=25 --critical-load=Threads_running=500 --cut-over-lock-timeout-seconds=2 --execute`.",
+  "`--ok-to-drop-table` lets gh-ost drop the old table after the cut-over, so nothing is left behind.",
+]
+solution = """
+```sql
+-- node1: a user for gh-ost (it connects over TCP; root@localhost is socket-only)
+CREATE USER 'ghost'@'127.0.0.1' IDENTIFIED BY 'Ghost-Lumen-2026';
+GRANT ALTER, CREATE, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON bookstore.* TO 'ghost'@'127.0.0.1';
+GRANT SUPER, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'ghost'@'127.0.0.1';
+GRANT SELECT ON performance_schema.* TO 'ghost'@'127.0.0.1';
+```
+```bash
+gh-ost --host=127.0.0.1 --port=3307 --user=ghost --password='Ghost-Lumen-2026' \\
+  --database=bookstore --table=books \\
+  --alter="MODIFY isbn VARCHAR(17) NOT NULL, ADD INDEX idx_isbn (isbn)" \\
+  --chunk-size=2000 --max-load=Threads_running=25 --critical-load=Threads_running=500 \\
+  --initially-drop-ghost-table --ok-to-drop-table --exact-rowcount --cut-over-lock-timeout-seconds=2 \\
+  --execute
+```
+gh-ost creates `_books_gho` with the new schema, copies rows in small chunks while **tailing the binlog** to
+apply the app's concurrent changes, then cuts over with a brief atomic `RENAME`. The app never waits on a
+long lock, and the change replicates like any other statement.
+
+**Lesson:** MySQL 8 does many changes `INSTANT` or `INPLACE` (adding a column is instant now), so check with
+`ALGORITHM=INSTANT`/`INPLACE, LOCK=NONE` first: MySQL refuses rather than locks. For changes that need a full
+copy (type changes, charset conversions), use a triggerless online schema change tool like gh-ost (or
+`pt-online-schema-change`), throttle it on load and replica lag, and keep the cut-over boring.
+"""

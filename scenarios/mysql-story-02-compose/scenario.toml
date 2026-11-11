@@ -1,0 +1,72 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "Ship it in a container"
+difficulty = "easy"
+minutes = 20
+box_minutes = 20
+order = 2
+tags = ["mysql", "docker", "compose", "secrets", "volumes"]
+summary = "Turn Marco's quick-and-dirty compose file into one you'd trust with real data."
+narrative = """
+**Marco (backend):** Hey! I need a MySQL I can spin up for staging and on my laptop. I threw together a
+`compose.yaml` in `~/deploy` and it works on my machine™. Priya says you have to approve it before it goes
+anywhere near real data. Be gentle 😅
+"""
+description = """
+Fix **`~/deploy/compose.yaml`** until the reviewer approves it. The rules for a MySQL container we can trust:
+
+1. **Pinned image**: an exact `mysql:8.4.x` version (not `latest`, not just `8.4`).
+2. **Data on a named volume** mounted at `/var/lib/mysql`, declared under top-level `volumes:`.
+3. **No password in the file**: the root password comes from a Docker **secret** file
+   (`MYSQL_ROOT_PASSWORD_FILE`), and the secret file is readable by you only (`chmod 600`).
+4. **Only reachable from this machine**: publish port 3306 on `127.0.0.1` only.
+5. A **healthcheck** using `mysqladmin ping`.
+6. A **restart policy** (`unless-stopped` or `always`) and a **memory limit**.
+7. Tuning lives in `~/deploy/conf.d/*.cnf`, mounted **read-only** at `/etc/mysql/conf.d`.
+
+There's no Docker daemon in this box (it's sandboxed), so the reviewer reads your YAML instead of running it.
+Press **Check** any time: it lists everything still wrong.
+"""
+hints = [
+  "Run Check early: it lists all the problems. Fix them one by one.",
+  "Secrets in compose: a top-level `secrets: {mysql_root_password: {file: ./secrets/mysql_root_password}}`, the service lists `secrets: [mysql_root_password]`, and the env var points at `/run/secrets/mysql_root_password`.",
+  "Ports: `\"127.0.0.1:3306:3306\"`. And inside the container MySQL must listen on all interfaces, or Docker can't forward to it: look closely at Marco's `.cnf`.",
+]
+solution = """
+```yaml
+services:
+  mysql:
+    image: mysql:8.4.13
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_DATABASE: bookstore
+    secrets: [mysql_root_password]
+    ports: ["127.0.0.1:3306:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./conf.d:/etc/mysql/conf.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 1g
+
+volumes:
+  mysql-data:
+
+secrets:
+  mysql_root_password:
+    file: ./secrets/mysql_root_password
+```
+```bash
+mkdir -p ~/deploy/secrets && openssl rand -base64 24 > ~/deploy/secrets/mysql_root_password   # or any strong value
+chmod 600 ~/deploy/secrets/mysql_root_password
+sed -i '/bind-address/d' ~/deploy/conf.d/lumen.cnf
+```
+**Lesson:** containers make the *defaults* dangerous: `latest` changes under you, data in the container layer
+dies with it, env-var passwords leak through `docker inspect`, and `3306:3306` publishes on every interface.
+Restrict at the port mapping (`127.0.0.1:`), not with `bind-address` inside the container, which would make
+the server unreachable through Docker's port forwarding.
+"""

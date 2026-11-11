@@ -31,7 +31,8 @@ def check(client, path, method="GET", want=200):
 
 with TestClient(app) as c:      # runs startup: DB init, reaper
     for p in ["/", "/api/me", "/api/tracks", "/api/scenarios/pg-wont-start", "/api/leaderboard",
-              "/api/leaderboard?engine=redis&period=30d", "/api/scoring", "/t/postgres", "/s/pg-wont-start"]:
+              "/api/leaderboard?engine=redis&period=30d", "/api/scoring", "/t/postgres", "/s/pg-wont-start",
+              "/api/stories", "/api/stories/mysql", "/story/mysql", "/api/scenarios/mysql-story-01-install"]:
         check(c, p)
     check(c, "/api/me/history", want=401)
     check(c, "/api/scenarios/pg-wont-start/hint", "POST", want=401)
@@ -46,6 +47,15 @@ with TestClient(app) as c:      # runs startup: DB init, reaper
         check(c, p)
     check(c, "/api/scenarios/redis-oom/hint", "POST")
     check(c, "/api/sessions/doesnotexist", want=404)
+    st = check(c, "/api/stories/mysql").json()
+    if st.get("chapters") != 9 or st["acts"][0]["chapters"][0]["slug"] != "mysql-story-01-install":
+        fails += 1; print("BAD story structure:", {k: st.get(k) for k in ("chapters", "next")})
+    ch = check(c, "/api/scenarios/mysql-story-03-pitr").json()
+    if ch.get("chapter") != 3 or ch.get("next") != "mysql-story-04-replication" or not ch.get("narrative") or ch.get("box_minutes") != 30:
+        fails += 1; print("BAD chapter nav:", {k: ch.get(k) for k in ("chapter", "next", "box_minutes")})
+    tr = check(c, "/api/tracks").json()
+    if any(s.get("story") for t in tr for s in t["scenarios"]):
+        fails += 1; print("BAD: story chapters leaked into practice tracks")
 
 print("PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

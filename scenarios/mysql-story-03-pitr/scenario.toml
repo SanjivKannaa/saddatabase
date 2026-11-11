@@ -1,0 +1,63 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "The table that wasn't there"
+difficulty = "hard"
+minutes = 30
+box_minutes = 30
+order = 3
+tags = ["mysql", "backup", "mysqldump", "binlog", "point-in-time recovery"]
+summary = "Someone dropped the orders table in production. Restore it to the second before it vanished."
+narrative = """
+**Sam (support):** Checkout is throwing errors for everyone. "Table 'bookstore.orders' doesn't exist" 😱
+
+**Marco:** …that was me. I ran the cleanup migration against prod instead of staging. I'm so sorry.
+
+**Priya:** Breathe. We have last night's backup in `/backups`, and binary logging has been on since you set it up.
+Get every order back: **including the ones placed today**. And don't wipe out today's customer changes doing it.
+"""
+description = """
+`bookstore.orders` was dropped this afternoon. The server (`node1`, port 3306) is up and customers are still
+being updated.
+
+Restore **`bookstore.orders` exactly as it was immediately before the `DROP`**: every order from last night's
+backup **plus every order placed since**.
+
+**Don't touch `bookstore.customers`**: it already has changes made *after* the drop that must survive.
+
+What you have: the nightly dump in `/backups/`, and the binary logs in the data directory (`/srv/mysql/node1`).
+`mysqlbinlog` is installed. `mysql` logs you in as root.
+"""
+hints = [
+  "The dump was taken with `--source-data=2`: `zcat /backups/*.sql.gz | grep -m1 'CHANGE REPLICATION SOURCE'` tells you the binlog file and position it corresponds to.",
+  "Find the DROP: `mysqlbinlog -v /srv/mysql/node1/binlog.0000NN | grep -n -i 'drop table'`, then look at the `# at NNN` line just before it. That's your stop position.",
+  "Don't restore the whole dump over `bookstore` (that would roll customers back). Restore it into a scratch database instead: strip the `CREATE DATABASE` / `USE` lines and `USE` your own.",
+  "`mysqlbinlog --rewrite-db='bookstore->scratch' --database=scratch --start-position=… --stop-position=… binlog.A binlog.B … | mysql` replays the day into the scratch copy. Careful: the rewrite happens *before* the `--database` filter, so the filter names the **new** database. Then move `orders` across.",
+]
+solution = """
+```bash
+cd /srv/mysql/node1
+zcat /backups/bookstore-nightly.sql.gz | grep -m1 'CHANGE REPLICATION SOURCE'
+#   -- CHANGE REPLICATION SOURCE TO SOURCE_LOG_FILE='binlog.000003', SOURCE_LOG_POS=158;
+ls binlog.0*                                           # 000003 .. 000006 matter: backup -> DROP
+for b in binlog.0*; do mysqlbinlog $b | grep -qi 'drop table' && echo $b; done   # -> binlog.000006
+mysqlbinlog binlog.000006 | grep -n -i -B12 'drop table'   # the last "# at NNN" before the DROP = stop position
+
+# 1) the backup into a scratch database (not over bookstore!)
+mysql -e 'CREATE DATABASE restore_scratch'
+zcat /backups/bookstore-nightly.sql.gz | sed '/^CREATE DATABASE/d; s/^USE `bookstore`;/USE `restore_scratch`;/' | mysql
+
+# 2) replay everything from the backup position up to (not including) the DROP, into the scratch copy
+mysqlbinlog --rewrite-db='bookstore->restore_scratch' --database=restore_scratch \\
+  --start-position=158 --stop-position=<pos-of-DROP> binlog.000003 binlog.000004 binlog.000005 binlog.000006 | mysql
+
+# 3) put orders back
+mysql -e 'RENAME TABLE restore_scratch.orders TO bookstore.orders; DROP DATABASE restore_scratch'
+```
+`--start-position` applies to the first file, `--stop-position` to the last, and `--rewrite-db` is applied
+*before* `--database`, so the filter must name the rewritten database (filter on `bookstore` and you get nothing). The scratch copy also gets the
+replayed customer changes, which is harmless because you only move `orders` across.
+
+**Lesson:** a dump alone loses everything since it was taken; *dump + binlogs* gets you to any second.
+Take dumps with `--single-transaction --source-data`, keep binlogs at least as long as your oldest backup, and
+practise this before you need it. Next time, test the restore first: `binlog_expire_logs_seconds` is not a backup policy.
+"""

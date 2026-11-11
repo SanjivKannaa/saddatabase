@@ -1,0 +1,44 @@
+id = "mysql"
+engine = "mysql"
+title = "Lumen Books"
+subtitle = "A MySQL story: from an empty server to zero-downtime migrations"
+cast = [
+  { name = "Priya", role = "CTO", avatar = "🧭" },
+  { name = "Marco", role = "Backend developer", avatar = "🛠️" },
+  { name = "Sam", role = "Support & on-call", avatar = "📟" },
+]
+intro = """
+**Lumen Books** sells used and rare books online. Twelve people, forty thousand customers, and a
+database that Marco installed on his laptop three years ago and copied to a VM "temporarily".
+
+Black Friday is in six weeks. Priya, the CTO, has finally hired a DBA. That's you.
+
+Over the next weeks you'll build their MySQL setup properly: install it, containerise it, back it up,
+replicate it, survive losing a server, automate failover and change big tables without taking the
+shop down. Every chapter is a real box with real MySQL: you do the work, the grader checks it.
+"""
+
+[[acts]]
+title = "Act I · Day one"
+intro = "Priya hands you a fresh server and a laptop sticker. Time to replace the laptop-era database."
+chapters = ["mysql-story-01-install", "mysql-story-02-compose"]
+
+[[acts]]
+title = "Act II · Don't lose the data"
+intro = "Nobody has ever restored a backup at Lumen Books. That is about to change, the hard way."
+chapters = ["mysql-story-03-pitr"]
+
+[[acts]]
+title = "Act III · A second copy"
+intro = "One server is one bad disk away from closing the shop. You add a replica, and learn what can go wrong with it."
+chapters = ["mysql-story-04-replication", "mysql-story-05-errant", "mysql-story-06-lag"]
+
+[[acts]]
+title = "Act IV · When the primary dies"
+intro = "Black Friday traffic, a dead server, and nobody awake but you. First by hand, then with orchestrator."
+chapters = ["mysql-story-07-failover", "mysql-story-08-orchestrator"]
+
+[[acts]]
+title = "Act V · Change without downtime"
+intro = "The catalogue needs a new column. The table has millions of rows and the shop can't stop."
+chapters = ["mysql-story-09-ghost"]

@@ -29,6 +29,12 @@ LABEL = "saddb.cli"
 CATALOG = json.loads(resources.files("saddb").joinpath("catalog.json").read_text())
 ENGINES = CATALOG["engines"]
 SCEN = {s["slug"]: s for s in CATALOG["scenarios"]}
+STORIES = {st["id"]: st for st in CATALOG.get("stories", [])}
+PRACTICE = [s for s in CATALOG["scenarios"] if not s.get("story")]
+
+
+def story_seq(sid: str) -> list:
+    return [c for a in STORIES[sid]["acts"] for c in a["chapters"] if c in SCEN]
 
 # ------------------------------------------------------------------ output
 
@@ -235,7 +241,9 @@ def cmd_list(args):
     for key, e in ENGINES.items():
         if args.track and args.track not in (key, e["name"].lower()):
             continue
-        items = [s for s in CATALOG["scenarios"] if s["engine"] == key]
+        items = [s for s in PRACTICE if s["engine"] == key]
+        if not items:
+            continue
         got = sum(prog(st, s["slug"]).get("best_score") or 0 for s in items if s["slug"] in st["progress"])
         mx = sum(scoring.max_points(s["difficulty"]) for s in items)
         done = sum(1 for s in items if (st["progress"].get(s["slug"]) or {}).get("solves"))
@@ -245,7 +253,36 @@ def cmd_list(args):
             mark = green("✓") if p.get("solves") else yellow("•") if p.get("attempts") else " "
             pts = f"{p['best_score']}/{scoring.max_points(s['difficulty'])}" if p.get("solves") else f"≤{scoring.max_points(s['difficulty'])}"
             print(f"  {mark} {i}. {s['slug']:<26} {DIFF[s['difficulty']](s['difficulty']):<17} {s['title']:<44} {dim(pts + ' pts')}")
+    for sid, story in STORIES.items():
+        seq = story_seq(sid)
+        done = sum(1 for c in seq if (st["progress"].get(c) or {}).get("solves"))
+        print(f"\n{bold('Story: ' + story['title'])}  {dim(f'{done}/{len(seq)} chapters · saddb story {sid}')}")
     print(dim("\nsaddb start <scenario> to play · saddb show <scenario> to read the task first"))
+
+
+def cmd_story(args):
+    st = load()
+    sid = args.story or next(iter(STORIES), None)
+    story = STORIES.get(sid) or die(f"no story {sid!r} (stories: {', '.join(STORIES) or 'none'})")
+    print(f"\n{bold(story['title'])}  {dim(story.get('subtitle', ''))}")
+    print("  " + dim("   ".join(f"{c['avatar']} {c['name']} ({c['role']})" for c in story.get("cast", []))))
+    print("\n" + md(story["intro"]))
+    n, nxt = 0, None
+    for act in story["acts"]:
+        print(f"\n {bold(act['title'])}\n {dim(act.get('intro', ''))}")
+        for slug in act["chapters"]:
+            n += 1
+            s = SCEN.get(slug)
+            if not s:
+                print(f"   {n}. {dim('coming soon')}")
+                continue
+            p = st["progress"].get(slug) or {}
+            mark = green("✓") if p.get("solves") else yellow("•") if p.get("attempts") else " "
+            if not p.get("solves") and not nxt:
+                nxt = slug
+            pts = f"{p['best_score']}/{scoring.max_points(s['difficulty'])}" if p.get("solves") else f"≤{scoring.max_points(s['difficulty'])}"
+            print(f"  {mark} {n}. {s['title']:<38} {DIFF[s['difficulty']](s['difficulty']):<17} {dim(slug + ' · ' + pts + ' pts')}")
+    print("\n" + (f"next: {bold('saddb start ' + nxt)}" if nxt else green("story complete 🎉")))
 
 
 def cmd_show(args):
@@ -255,6 +292,10 @@ def cmd_show(args):
 
 def task(s: dict):
     e = ENGINES[s["engine"]]
+    if s.get("story"):
+        print(dim(f"\n{STORIES[s['story']]['title']} · Chapter {s['chapter']} of {len(story_seq(s['story']))}"))
+    if s.get("narrative"):
+        print("\n" + md(s["narrative"], "  │ "))
     print(f"\n{bold(s['title'])}  {dim('·')} {DIFF[s['difficulty']](s['difficulty'])} {dim('·')} ~{s['minutes']} min "
           f"{dim('·')} {e['name']} {e['version']} {dim('·')} up to {scoring.max_points(s['difficulty'])} pts\n")
     print(md(s["description"]))
@@ -274,12 +315,12 @@ def cmd_start(args):
         end_box(st, "replaced")
     stray = running_box()
     if stray:
-        docker("rm", "-f", stray[0], check=False)
+        docker("rm", "-fv", stray[0], check=False)
 
     image = image_for(s["slug"])
     lab = labels(image)
     now = int(time.time())
-    expires = now + BOX_SECONDS
+    expires = now + (int(s["box_minutes"]) * 60 if s.get("box_minutes") else BOX_SECONDS)
     print(dim(f"booting your broken {ENGINES[s['engine']]['name']} box…"), end="", flush=True)
     cid = docker("run", "-d", "--rm", "--init", "--network", "none",
                  "--memory", lab.get("saddb.mem", "512m"), "--memory-swap", lab.get("saddb.mem", "512m"),
@@ -292,7 +333,7 @@ def cmd_start(args):
             break
         time.sleep(0.5)
     else:
-        docker("rm", "-f", cid, check=False)
+        docker("rm", "-fv", cid, check=False)
         die("the box didn't come up in 2 minutes")
     set_expiry(cid, expires)
     docker("exec", "-d", "-u", "root", cid, "sh", "-c", WATCHER)
@@ -306,7 +347,7 @@ def cmd_start(args):
                           "score": None, "ended_at": None})
     save(st)
     task(s)
-    print(dim(f"Box lives {BOX_SECONDS // 60} min (saddb extend: +{EXTEND_SECONDS // 60} min, {MAX_EXTENSIONS}x). "
+    print(dim(f"Box lives {(expires - now) // 60} min (saddb extend: +{EXTEND_SECONDS // 60} min, {MAX_EXTENSIONS}x). "
               f"Exit the shell any time; the box keeps running. Then: saddb check · saddb hint · saddb shell · saddb end"))
     if not args.detach:
         input(dim("Press Enter to open the shell… "))
@@ -392,10 +433,11 @@ def cmd_check(args):
     if prev is not None:
         print(dim(f"   best for this scenario: {p['best_score']} pts"))
     print(dim(f"   total: {total_points(st)} pts"))
-    track = [x for x in CATALOG["scenarios"] if x["engine"] == s["engine"]]
-    i = [x["slug"] for x in track].index(s["slug"])
-    nxt = track[i + 1]["slug"] if i + 1 < len(track) else None
-    print(f"\n{'next in track: ' + bold('saddb start ' + nxt) if nxt else 'track complete! ' + dim('saddb list for the others')}"
+    seq = story_seq(s["story"]) if s.get("story") else [x["slug"] for x in PRACTICE if x["engine"] == s["engine"]]
+    i = seq.index(s["slug"])
+    nxt = seq[i + 1] if i + 1 < len(seq) else None
+    label = "next chapter" if s.get("story") else "next in track"
+    print(f"\n{label + ': ' + bold('saddb start ' + nxt) if nxt else ('story' if s.get('story') else 'track') + ' complete! ' + dim('saddb list for more')}"
           f"{dim('  ·  saddb end to remove this box')}")
 
 
@@ -450,7 +492,7 @@ def end_box(st: dict, reason: str):
     a = st.get("active")
     if not a:
         return
-    docker("rm", "-f", a["container"], check=False)
+    docker("rm", "-fv", a["container"], check=False)
     h = next((h for h in reversed(st["history"]) if h["container"] == a["container"]), None)
     if h and not h.get("ended_at"):
         h["ended_at"] = int(time.time())
@@ -505,6 +547,7 @@ def main(argv=None):
     ap.add_argument("--version", action="version", version=f"saddb {__version__} ({len(SCEN)} scenarios)")
     sub = ap.add_subparsers(dest="cmd", metavar="command")
     p = sub.add_parser("list", help="tracks and scenarios, with your progress"); p.add_argument("track", nargs="?"); p.set_defaults(f=cmd_list)
+    p = sub.add_parser("story", help="story mode: chapters, cast and what's next"); p.add_argument("story", nargs="?"); p.set_defaults(f=cmd_story)
     p = sub.add_parser("show", help="read a scenario's task without starting it"); p.add_argument("slug"); p.set_defaults(f=cmd_show)
     p = sub.add_parser("start", help="boot a scenario's broken box and open its shell"); p.add_argument("slug")
     p.add_argument("-d", "--detach", action="store_true", help="don't open the shell")

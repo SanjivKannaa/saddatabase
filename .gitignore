@@ -4,3 +4,4 @@ __pycache__/
 data/
 .env
 cli/.venv/
+images/mysql-lab-base/vendor/

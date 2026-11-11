@@ -1,0 +1,60 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "A second copy"
+difficulty = "hard"
+minutes = 35
+box_minutes = 30
+order = 4
+tags = ["mysql", "replication", "gtid", "mysqldump"]
+summary = "Turn node2 into a live GTID replica of node1, while orders keep coming in."
+narrative = """
+**Priya:** After last week, I want a second copy of everything, live. We have one server, which means one bad
+disk and we're closed. `node2` is installed but empty. Make it a **real replica** of `node1`, and the shop
+stays open while you do it: orders are coming in right now.
+"""
+description = """
+Make **`node2`** (port 3307) a live replica of **`node1`** (port 3306, `bookstore` with live traffic).
+
+1. Replicate with **GTID auto-positioning**, using a **dedicated replication user** (not root).
+2. **Seed** node2 with node1's `bookstore` data, consistently, while writes continue.
+3. node2 must be **read-only for everyone** (including root), and stay that way after a restart.
+4. Both servers keep running; don't stop the writes on node1.
+
+`node1` / `node2` open a root client on each; `dbctl status` / `dbctl restart node2`; configs are in
+`/etc/mysql/nodes/`. The grader writes on node1 and expects to see it on node2 within seconds.
+"""
+hints = [
+  "Compare `/etc/mysql/nodes/node1.cnf` and `node2.cnf`. Two servers in one topology can't share a `server_id`, and GTID auto-positioning needs `gtid_mode=ON` + `enforce_gtid_consistency=ON` on both.",
+  "Seed with `mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2`. The dump sets `GTID_PURGED`, which only works on a replica with an empty GTID history: `RESET BINARY LOGS AND GTIDS` on node2 first.",
+  "If the replica's IO thread fails with *Authentication requires secure connection*: MySQL 8's default auth plugin needs TLS or the source's public key. Add `GET_SOURCE_PUBLIC_KEY=1` to `CHANGE REPLICATION SOURCE TO`.",
+  "Read-only for root too: `super_read_only`. `SET PERSIST` (or the .cnf) makes it survive a restart.",
+]
+solution = """
+```bash
+# 1. a replication user on the source
+node1 -e "CREATE USER 'repl'@'127.0.0.1' IDENTIFIED BY 'Repl-Lumen-2026'; GRANT REPLICATION SLAVE ON *.* TO 'repl'@'127.0.0.1';"
+
+# 2. fix node2's config: unique server_id, GTIDs on
+sed -i 's/^server_id .*/server_id = 2/; /^gtid_mode/d; /^enforce_gtid_consistency/d' /etc/mysql/nodes/node2.cnf
+printf 'gtid_mode = ON\\nenforce_gtid_consistency = ON\\n' >> /etc/mysql/nodes/node2.cnf
+dbctl restart node2
+
+# 3. seed: a consistent snapshot that carries its GTID position
+node2 -e "RESET BINARY LOGS AND GTIDS"
+mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2
+
+# 4. replicate, then lock it down
+node2 <<'SQL'
+CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=3306,
+  SOURCE_USER='repl', SOURCE_PASSWORD='Repl-Lumen-2026', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1;
+START REPLICA;
+SET PERSIST super_read_only = ON;
+SQL
+node2 -e 'SHOW REPLICA STATUS\\G' | grep -E 'Running:|Behind|Auto_Position'
+```
+**Lesson:** GTIDs make the replica's position part of the data: a dump with `--set-gtid-purged=ON` tells the
+replica exactly which transactions it already has, so auto-positioning picks up the rest, with no binlog file
+and position to copy by hand. Give replication its own least-privilege user, give every server a unique
+`server_id`, and make replicas `super_read_only` so nobody "just fixes something" on the wrong server
+(spoiler: next chapter).
+"""

@@ -1,0 +1,12 @@
+#!/bin/bash
+# Download the third-party binaries baked into the MySQL story image (images/mysql-lab-base/vendor, gitignored)
+# and check them against vendor.sha256. First run with --pin writes the checksums.
+set -euo pipefail
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd); V=$ROOT/images/mysql-lab-base/vendor; mkdir -p "$V"; cd "$V"
+get() { [ -s "$2" ] || { echo "downloading $2"; curl -fsSL --retry 3 -o "$2.part" "$1" && mv "$2.part" "$2"; }; }
+get https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-8.4.13-linux-glibc2.28-x86_64-minimal.tar.xz mysql-8.4.13-linux-glibc2.28-x86_64-minimal.tar.xz
+get https://github.com/github/gh-ost/releases/download/v1.1.11/gh-ost-linux-amd64.tar.gz gh-ost-v1.1.11-linux-amd64.tar.gz
+get https://repo.percona.com/pdps-8.4.11/yum/release/9/RPMS/x86_64/percona-orchestrator-3.2.6-24.el9.x86_64.rpm percona-orchestrator-3.2.6-24.el9.x86_64.rpm
+get https://repo.percona.com/pdps-8.4.11/yum/release/9/RPMS/x86_64/percona-orchestrator-client-3.2.6-24.el9.x86_64.rpm percona-orchestrator-client-3.2.6-24.el9.x86_64.rpm
+if [ "${1:-}" = --pin ]; then sha256sum *.tar.* *.rpm > "$ROOT/images/mysql-lab-base/vendor.sha256"; echo "pinned"; fi
+sha256sum -c "$ROOT/images/mysql-lab-base/vendor.sha256"

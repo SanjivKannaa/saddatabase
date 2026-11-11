@@ -3,6 +3,7 @@ import tomllib
 from pathlib import Path
 
 SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+STORIES_DIR = Path(__file__).resolve().parent.parent / "stories"
 
 ENGINES = {
     "postgres": {"name": "PostgreSQL", "version": "17", "color": "#336791",
@@ -25,3 +26,21 @@ def load_scenarios() -> dict[str, dict]:
             out[meta["slug"]] = meta
     order = list(ENGINES)
     return dict(sorted(out.items(), key=lambda kv: (order.index(kv[1]["engine"]), kv[1].get("order", 99))))
+
+
+def load_stories(scenarios: dict[str, dict]) -> dict[str, dict]:
+    """stories/<id>/story.toml. Chapters are scenarios; a chapter that isn't built yet is listed as coming soon."""
+    out = {}
+    for f in sorted(STORIES_DIR.glob("*/story.toml")):
+        st = tomllib.loads(f.read_text())
+        st["id"] = f.parent.name
+        n = 0
+        for act in st.get("acts", []):
+            for slug in act["chapters"]:
+                n += 1
+                if slug in scenarios:
+                    scenarios[slug]["story"] = st["id"]
+                    scenarios[slug]["chapter"] = n
+        st["chapter_slugs"] = [c for a in st.get("acts", []) for c in a["chapters"]]
+        out[st["id"]] = st
+    return out

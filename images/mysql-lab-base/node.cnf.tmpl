@@ -1,0 +1,24 @@
+# node@N@ of this box: 127.0.0.1:@PORT@
+[mysqld]
+server_id                 = @N@
+port                      = @PORT@
+socket                    = /var/run/mysqld/node@N@.sock
+pid-file                  = /var/run/mysqld/node@N@.pid
+datadir                   = /srv/mysql/node@N@
+log-error                 = /var/log/mysql/node@N@.err
+bind-address              = 127.0.0.1
+mysqlx                    = OFF
+skip-name-resolve
+report_host               = 127.0.0.1
+report_port               = @PORT@
+log_bin                   = binlog
+relay_log                 = relay-bin   # not hostname-based: boxes are built and run under different hostnames
+binlog_format             = ROW
+# small-footprint settings: three of these share a 1 GB box
+performance_schema        = OFF
+innodb_buffer_pool_size   = 64M
+innodb_log_buffer_size    = 4M
+innodb_redo_log_capacity  = 64M
+max_connections           = 60
+table_open_cache          = 400
+tmp_table_size            = 16M

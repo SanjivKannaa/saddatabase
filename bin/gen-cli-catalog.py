@@ -6,10 +6,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from app.catalog import ENGINES, load_scenarios  # noqa: E402
+from app.catalog import ENGINES, load_scenarios, load_stories  # noqa: E402
 
-keys = ["slug", "engine", "title", "difficulty", "minutes", "order", "tags", "summary", "description", "hints", "solution"]
-cat = {"engines": ENGINES, "scenarios": [{k: s.get(k) for k in keys} for s in load_scenarios().values()]}
+keys = ["slug", "engine", "title", "difficulty", "minutes", "order", "tags", "summary", "description", "hints", "solution",
+        "story", "chapter", "narrative", "box_minutes"]
+scen = load_scenarios()
+stories = load_stories(scen)        # tags chapters with story/chapter
+cat = {"engines": ENGINES, "scenarios": [{k: s.get(k) for k in keys} for s in scen.values()],
+       "stories": [{k: st.get(k) for k in ("id", "engine", "title", "subtitle", "intro", "cast", "acts")} for st in stories.values()]}
 out = ROOT / "cli" / "saddb" / "catalog.json"
 new = json.dumps(cat, indent=1, ensure_ascii=False) + "\n"
 changed = not out.exists() or out.read_text() != new

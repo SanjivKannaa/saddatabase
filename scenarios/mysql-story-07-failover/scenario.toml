@@ -1,0 +1,62 @@
+engine = "mysql"
+base = "mysql-lab"
+title = "The primary is dead"
+difficulty = "hard"
+minutes = 30
+box_minutes = 30
+order = 7
+tags = ["mysql", "failover", "replication", "gtid", "high availability"]
+summary = "Black Friday, 09:14. The primary's disk is gone. Promote a replica without losing a single order."
+narrative = """
+**Sam, 09:14:** EVERYTHING IS DOWN. Checkout fails, the app says it can't connect to the database.
+
+**Priya, 09:15:** I see it: node1's disk died. The hosting company says hours, maybe a day. We have two
+replicas. You have the con: get us taking orders again, and **don't lose any**: the last minutes before the
+crash were our busiest ever.
+"""
+description = """
+`node1` (3306), the primary, is **gone** and won't come back today. `node2` (3307) and `node3` (3308) were
+its replicas.
+
+1. **Promote** the replica that has **every transaction node1 committed**. Promoting the wrong one silently
+   loses orders.
+2. Make it a proper primary: **writable**, **not replicating** from anything, and still writable after a restart.
+3. Point the **other replica** at the new primary (GTID auto-positioning) so you still have a copy.
+4. Point the **app** at the new primary: `/srv/app/db.env`. The app retries every second, and orders should
+   start flowing again once it can write.
+
+Replication user: `repl` / `Repl-Lumen-2026`. `node2` / `node3` are root clients; `dbctl status` shows what's up.
+"""
+hints = [
+  "Compare the replicas: `SHOW REPLICA STATUS\\\\G` on each, especially `Retrieved_Gtid_Set` and `Executed_Gtid_Set`. One has more of node1's transactions (same UUID, higher number).",
+  "On the winner: `STOP REPLICA; RESET REPLICA ALL;` (forget the dead source), then make it writable: `SET PERSIST super_read_only = OFF; SET PERSIST read_only = OFF;`.",
+  "On the other replica: `STOP REPLICA; CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=<new primary>, SOURCE_USER='repl', SOURCE_PASSWORD='…', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1; START REPLICA;`. Auto-positioning fetches whatever it's missing from its new source.",
+]
+solution = """
+```sql
+-- which replica has more of node1's history?
+-- node2: Executed_Gtid_Set: 7b1e…:1-1068      node3: Executed_Gtid_Set: 7b1e…:1-1018
+-- node3 stopped fetching a few minutes before the crash. node2 has everything: promote node2.
+```
+```sql
+-- node2 becomes the primary
+STOP REPLICA;
+RESET REPLICA ALL;
+SET PERSIST super_read_only = OFF;
+SET PERSIST read_only = OFF;
+```
+```sql
+-- node3 follows node2 and fetches the 50 transactions it was missing
+STOP REPLICA;
+CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=3307,
+  SOURCE_USER='repl', SOURCE_PASSWORD='Repl-Lumen-2026', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1;
+START REPLICA;
+```
+```bash
+sed -i 's/^DB_PORT=.*/DB_PORT=3307/' /srv/app/db.env      # the app reconnects within a second
+```
+**Lesson:** failover is a sequence: pick the most advanced replica (GTID sets make that a comparison, not a
+guess), detach it from the dead source, make it writable *persistently*, re-home the remaining replicas,
+then move the traffic. Every step done by hand under pressure is a step you can get wrong, and doing it at 09:14
+on Black Friday is exactly why the next chapter automates it.
+"""

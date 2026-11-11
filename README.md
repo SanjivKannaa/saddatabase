@@ -7,9 +7,31 @@ terminal in the browser on a disposable box with a broken database, fix it, pres
 Sign in with Google; progress, attempts, checks, hints and solution peeks are stored per user, with a
 profile page and a leaderboard (clean solves first).
 
+## Story mode: *Lumen Books* (MySQL)
+You're the first DBA at an online bookstore. Nine chapters, each a real box with up to three `mysqld` nodes:
+
+| Act | Chapter | You do |
+|---|---|---|
+| I · Day one | 1 The empty server | install 8.4 from the official tarball: my.cnf, initialise, secure root, app user |
+| | 2 Ship it in a container | review/fix a compose file: pinned image, named volume, secret file, 127.0.0.1 port, healthcheck |
+| II · Don't lose the data | 3 The table that wasn't there | point-in-time recovery: dump + binlog replay to just before a `DROP TABLE` |
+| III · A second copy | 4 A second copy | build GTID replication under live writes (server_id, GTID, public-key auth, super_read_only) |
+| | 5 Replication broke at 3 a.m. | duplicate-key stop, hidden drift, errant GTIDs |
+| | 6 The replica is 20 minutes behind | a hung backup holding a global read lock; fix the backup script |
+| IV · When the primary dies | 7 The primary is dead | manual failover: promote the replica with every GTID, re-home the other, move the app |
+| | 8 Let the robot do it | configure orchestrator (Percona 3.2.6-24); the grader kills the primary and it must recover |
+| V · Change without downtime | 9 ALTER TABLE without the freeze | gh-ost 1.1.11 under live traffic; blocking ALTERs are detected |
+
+The story lives in `stories/mysql/story.toml` (intro, cast, acts → chapter slugs); chapters are ordinary scenarios
+(`scenarios/mysql-story-*`) with `base = "mysql-lab"`, a `narrative` and an optional `box_minutes`.
+`images/mysql-lab-base` runs nodes `node1..3` (ports 3306–3308) with `dbctl start|stop|status nodeN`, `node1/2/3`
+clients, `orcctl` for orchestrator, and the tools from `bin/fetch-vendor` (MySQL tarball, gh-ost, orchestrator;
+checksums pinned in `images/mysql-lab-base/vendor.sha256`, downloads gitignored).
+
 ## Play in your terminal (no login)
 ```
 uv tool install "git+https://github.com/SanjivKannaa/saddatabase#subdirectory=cli"
+saddb story                                  # the Lumen Books story, chapter by chapter
 saddb list && saddb start pg-wont-start      # then: saddb check / hint / extend / end / progress
 ```
 Only needs Docker. Same scenarios and scoring as the website, progress kept locally. See [cli/README.md](cli/README.md).
@@ -56,7 +78,7 @@ On magickite it's published as https://sad.db.magickite by `sudo deploy/install-
 `scenarios/<slug>/` (slug prefix = engine: `pg-`, `mysql-`, `mongo-`, `redis-`):
 | file | when it runs | purpose |
 |---|---|---|
-| `scenario.toml` | web app | `engine`, title, difficulty, minutes, `order` (position in the track), tags, summary, description (markdown), hints[], solution |
+| `scenario.toml` | web app | `engine` (+ optional `base`, `narrative`, `box_minutes`), title, difficulty, minutes, `order` (position in the track), tags, summary, description (markdown), hints[], solution |
 | `setup.sh` | `docker build`, as root | `db_start`, load data, `db_stop`, then break things. Data is baked into the image. |
 | `start.sh` (optional) | box start, as root | runtime misbehaviour (blocking sessions, leaks). Default: `db_start`. |
 | `check.sh` | "Check" button, as root | exit 0 = solved. Print `PASS:`/`FAIL:` lines; the player sees them. |

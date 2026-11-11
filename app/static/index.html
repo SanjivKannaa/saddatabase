@@ -104,6 +104,18 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 .timer.low { color: var(--bad); font-weight: 600; }
 button.nudge { border-color: var(--bad); color: var(--bad); }
 .termhelp { color: #8a8378; font: 12px "IBM Plex Sans", sans-serif; padding: 6px 4px 0; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.story-hero { background: linear-gradient(135deg, var(--panel), var(--code-bg)); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin: 0 0 26px; display: grid; gap: 8px; text-decoration: none; color: inherit; }
+.story-hero:hover { border-color: var(--accent); }
+.story-hero .kicker { font: 600 12px "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.story-hero h2 { margin: 0; font-size: 24px; }
+.cast { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.act { margin: 30px 0 6px; }
+.act h2 { margin: 0 0 4px; font-size: 19px; }
+.act p { margin: 0; color: var(--muted); }
+.chat { background: var(--code-bg); border-radius: 10px; padding: 10px 14px; margin: 10px 0 14px; font-size: 14px; border-left: 3px solid var(--accent); }
+.chat p { margin: 6px 0; }
+.soon { opacity: .55; }
+.section-title { font: 600 13px "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
 .notice { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
 @media (max-width: 820px) {
   .play { grid-template-columns: minmax(0, 1fr); height: auto; padding: 10px; gap: 10px; }
@@ -146,7 +158,7 @@ button.nudge { border-color: var(--bad); color: var(--bad); }
     <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="7" rx="11" ry="4" fill="var(--accent)"/><path d="M5 7v18c0 2.2 4.9 4 11 4s11-1.8 11-4V7" fill="none" stroke="var(--accent)" stroke-width="2.5"/><circle cx="12" cy="17" r="1.5" fill="var(--accent)"/><circle cx="20" cy="17" r="1.5" fill="var(--accent)"/><path d="M11.5 23c2.5-2.2 6.5-2.2 9 0" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/></svg>
     sadDatabase
   </a>
-  <nav><a href="/" data-link>Tracks</a><a href="/leaderboard" data-link>Leaderboard</a></nav>
+  <nav><a href="/story/mysql" data-link>Story</a><a href="/" data-link>Practice</a><a href="/leaderboard" data-link>Leaderboard</a></nav>
   <span class="spacer"></span>
   <div class="who" id="who"></div>
 </header>
@@ -200,6 +212,7 @@ async function route() {
   try {
     if ((m = p.match(/^\/s\/([\w-]+)/))) return await scenarioView(m[1]);
     if ((m = p.match(/^\/t\/([\w-]+)/))) return await trackView(m[1]);
+    if ((m = p.match(/^\/story\/([\w-]+)/))) return await storyView(m[1]);
     if (p === '/me') return await meView();
     if (p === '/leaderboard') return await leaderboardView();
     return await homeView();
@@ -208,12 +221,20 @@ async function route() {
 
 /* ------------------------------------------------------------------ home: tracks */
 async function homeView() {
-  const tracks = await api('/api/tracks');
+  const [tracks, stories] = await Promise.all([api('/api/tracks'), api('/api/stories')]);
   const total = tracks.reduce((a, t) => a + t.scenarios.length, 0), solved = tracks.reduce((a, t) => a + t.solved, 0);
   $('#view').innerHTML = `<main>
     <h1>Something is wrong with the database.</h1>
     <p class="lead">Pick a track. Each scenario boots a disposable box with a broken database and gives you a real shell.
       Find the problem, fix it, press <b>Check</b>. ${ME.user ? `You've solved <b>${solved} of ${total}</b>.` : 'Sign in to start a box and keep your progress.'}</p>
+    ${stories.map(st => `<a class="story-hero" href="/story/${st.id}" data-link>
+      <span class="kicker">Story mode · ${esc(st.engine_name)}</span>
+      <h2>${esc(st.title)}</h2>
+      <p class="lead" style="margin:0">${esc(st.subtitle)}. Install it, back it up, replicate it, fail it over, migrate it live: one chapter at a time.</p>
+      <div class="meta"><span>${st.chapters} chapters</span>${ME.user ? `<span>${st.solved} done</span><span class="pts">${st.points} / ${st.max_points} pts</span>` : `<span>${st.max_points} pts to earn</span>`}</div>
+      <div class="bar" style="max-width:420px"><i style="width:${st.chapters ? 100 * st.solved / st.chapters : 0}%"></i></div>
+    </a>`).join('')}
+    <div class="section-title">Practice: incident drills by database</div>
     <div class="grid">${tracks.map(t => `
       <a class="card" href="/t/${t.engine}" data-link>
         <h3><span class="engine-dot" style="background:${t.color}"></span>${esc(t.name)} <span class="meta" style="display:inline">${esc(t.version)}</span></h3>
@@ -248,17 +269,47 @@ async function trackView(engine) {
     </ol></main>`;
 }
 
+/* ------------------------------------------------------------------ story */
+async function storyView(id) {
+  const st = await api(`/api/stories/${id}`);
+  document.title = `${st.title} · sadDatabase`;
+  let n = 0;
+  $('#view').innerHTML = `<main>
+    <div class="section-title">Story mode · ${esc(st.engine_name)}</div>
+    <h1>${esc(st.title)}</h1>
+    <p class="lead">${esc(st.subtitle)}</p>
+    <div class="cast">${st.cast.map(c => `<span>${esc(c.avatar)} <b>${esc(c.name)}</b>, ${esc(c.role)}</span>`).join('')}</div>
+    <div style="max-width:660px;margin-top:14px">${md(st.intro)}</div>
+    <div style="max-width:420px;margin:16px 0"><div class="meta" style="margin-bottom:6px">${st.solved} / ${st.chapters} chapters${ME.user ? ` · <span class="pts">${st.points} / ${st.max_points} pts</span>` : ''}</div>
+      <div class="bar"><i style="width:${100 * st.solved / st.chapters}%"></i></div></div>
+    ${st.next ? `<a class="btn primary" href="/s/${st.next}" data-link>${st.solved ? 'Continue' : 'Start'}: Chapter ${st.acts.flatMap(a => a.chapters).find(c => c.slug === st.next).chapter} →</a>` : `<p class="solved">🎉 Story complete. You run Lumen Books' databases now.</p>`}
+    ${st.acts.map(a => `<section class="act"><h2>${esc(a.title)}</h2><p>${esc(a.intro)}</p></section>
+      <ol class="flow" style="margin-top:14px">${a.chapters.map(c => c.coming_soon ? `
+        <li class="soon"><div class="step">${c.chapter}</div><div class="card"><h3>Chapter ${c.chapter}</h3><p>Coming soon.</p></div></li>` : `
+        <li><div class="step ${c.solved ? 'done' : c.attempts ? 'tried' : ''}">${c.solved ? '✓' : c.chapter}</div>
+          <a class="card" href="/s/${c.slug}" data-link ${st.next === c.slug ? 'style="border-color:var(--accent)"' : ''}>
+            <div class="meta"><span>Chapter ${c.chapter}</span><span class="pill diff-${c.difficulty}">${c.difficulty}</span><span>~${c.minutes} min</span>
+              ${c.solved ? `<span class="solved">✓ ${c.points} / ${c.max_points} pts</span>` : `<span class="pts">up to ${c.max_points} pts</span>`}
+              ${st.next === c.slug ? '<span style="color:var(--accent);font-weight:600">up next</span>' : ''}</div>
+            <h3>${esc(c.title)}</h3><p>${esc(c.summary)}</p>
+            <div class="meta">${c.tags.map(x => `<span>#${esc(x)}</span>`).join('')}</div>
+          </a></li>`).join('')}</ol>`).join('')}
+  </main>`;
+}
+
 /* ------------------------------------------------------------------ play */
 async function scenarioView(slug) {
   const s = await api(`/api/scenarios/${slug}`);
   document.title = `${s.title} · sadDatabase`;
   $('#view').innerHTML = `<div class="play">
     <section class="task">
-      <a class="back" href="/t/${s.engine}" data-link>← ${esc(s.engine_name)} track · ${s.position} of ${s.track_size}</a>
+      ${s.story ? `<a class="back" href="/story/${s.story}" data-link>← ${esc(s.story_title)} · Chapter ${s.chapter} of ${s.track_size}</a>`
+                : `<a class="back" href="/t/${s.engine}" data-link>← ${esc(s.engine_name)} track · ${s.position} of ${s.track_size}</a>`}
       <h2>${esc(s.title)}</h2>
       <div class="meta"><span class="pill diff-${s.difficulty}">${s.difficulty}</span><span>~${s.minutes} min</span>
         <span class="pts">${s.solved ? `your best: ${s.points} / ${s.max_points} pts` : `up to ${s.max_points} pts`}</span>
         ${s.solved ? `<span class="solved">✓ solved · best ${dur(s.best_seconds)}</span>` : ''}<span class="timer" id="timer"></span></div>
+      ${s.narrative ? `<div class="chat">${md(s.narrative)}</div>` : ''}
       <div>${md(s.description)}</div>
       <div class="btns" id="btns"></div>
       <div id="result"></div>
@@ -397,8 +448,8 @@ async function scenarioView(slug) {
           <div class="sum"><span>This solve</span><span>${r.score.total} pts</span></div>
           ${r.previous_best != null ? `<div><span>Your best for this scenario</span><span>${Math.max(r.previous_best, r.score.total)} pts</span></div>` : ''}</div>` : '';
       $('#result').innerHTML = `<div class="result ${r.passed ? 'ok' : 'bad'}">${r.passed ? `🎉 Solved in ${dur(r.seconds)}\n` : ''}${esc(r.output)}${bd}</div>`
-        + (r.passed && s.next ? `<div class="btns"><a class="btn primary" href="/s/${s.next}" data-link>Next in track →</a></div>` : '')
-        + (r.passed && !s.next ? `<div class="btns"><a class="btn primary" href="/t/${s.engine}" data-link>Track complete! Back to track</a></div>` : '');
+        + (r.passed && s.next ? `<div class="btns"><a class="btn primary" href="/s/${s.next}" data-link>${s.story ? 'Next chapter' : 'Next in track'} →</a></div>` : '')
+        + (r.passed && !s.next ? `<div class="btns"><a class="btn primary" href="${s.story ? '/story/' + s.story : '/t/' + s.engine}" data-link>${s.story ? 'Story complete! 🎉' : 'Track complete! Back to track'}</a></div>` : '');
       if (r.passed) loadMe();
       if (r.passed && s.next) $('#end').click();
     } catch (e) { showErr(e.message); }
