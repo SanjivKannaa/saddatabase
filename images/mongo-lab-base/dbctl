@@ -1,0 +1,44 @@
+#!/bin/bash
+# dbctl start|stop|restart|status [node1|node2|node3|all]   (default: every node with a config)
+# nodeN: /etc/mongodb/nodes/nodeN.conf (YAML), data /srv/mongo/nodeN, log /var/log/mongodb/nodeN.log
+act=${1:-status}; target=${2:-all}
+items() {
+  if [ "$target" = all ]; then
+    { ls /etc/mongodb/nodes/ 2>/dev/null | sed -n 's/^\(node[0-9]\)\.conf$/\1/p'; for f in /etc/sad/node*.dead; do [ -f "$f" ] && basename "$f" .dead; done; } | sort -u
+  else echo "${target/#[0-9]/node$target}"; fi
+}
+conf() { echo /etc/mongodb/nodes/$1.conf; }
+yget() { sed -n "s/^[[:space:]]*$2:[[:space:]]*\"\{0,1\}\([^\" #]*\).*/\1/p" "$(conf $1)" 2>/dev/null | head -1; }
+pidf() { local p; p=$(yget $1 pidFilePath); echo "${p:-/var/run/mongodb/$1.pid}"; }
+port() { local p; p=$(yget $1 port); echo "${p:-27017}"; }
+alive() { [ -s "$(pidf $1)" ] && kill -0 "$(cat "$(pidf $1)")" 2>/dev/null; }
+start() {
+  local n=$1 c; c=$(conf $1)
+  [ -f /etc/sad/$n.dead ] && { echo "$n: $(cat /etc/sad/$n.dead)"; return 1; }
+  [ -f "$c" ] || { echo "$n: no such node (no $c)"; return 1; }
+  alive $n && { echo "$n is already running"; return 0; }
+  local out
+  if out=$(mongod -f "$c" 2>&1); then echo "$n started (port $(port $n))"; return 0; fi
+  echo "$n failed to start:"; echo "$out" | grep -v -e '^about to fork' -e '^forked process' | tail -4 | sed 's/^/  /'
+  local lf; lf=$(yget $n path); [ -n "$lf" ] && { grep -E '"s":"(E|F)"|"s":"W"' "$lf" 2>/dev/null | tail -3 | cut -c1-300 | sed 's/^/  /'; echo "  (log: $lf)"; }
+  return 1
+}
+stop() {
+  local n=$1
+  alive $n || { echo "$n is not running"; return 0; }
+  kill "$(cat "$(pidf $n)")"; for i in $(seq 180); do alive $n || { echo "$n stopped"; return 0; }; sleep 0.5; done; return 1
+}
+status() {
+  local n=$1
+  if alive $n; then echo "$n: running  (127.0.0.1:$(port $n), pid $(cat "$(pidf $n)"))"
+  elif [ -f /etc/sad/$n.dead ]; then echo "$n: DOWN ($(cat /etc/sad/$n.dead))"
+  else echo "$n: stopped"; fi
+}
+rc=0
+[ -n "$(items)" ] || { echo "no nodes configured yet (/etc/mongodb/nodes)"; exit 0; }
+case $act in
+  start|stop|status) for n in $(items); do $act $n || rc=1; done ;;
+  restart) for n in $(items); do stop $n; start $n || rc=1; done ;;
+  *) sed -n '2,3p' "$0"; exit 2 ;;
+esac
+exit $rc

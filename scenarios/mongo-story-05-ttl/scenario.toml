@@ -1,0 +1,53 @@
+engine = "mongo"
+base = "mongo-lab"
+title = "The readings that never expire"
+difficulty = "medium"
+minutes = 25
+box_minutes = 30
+order = 5
+tags = ["mongodb", "ttl index", "bson types", "$toDate", "collMod"]
+summary = "There's a TTL index, yet two months of readings pile up. Fix the data types, the index and the ingest job."
+narrative = """
+**Ana:** A grower asked why their dashboard still shows readings from September. Our terms say we keep 30 days.
+
+**Kofi:** There's a TTL index on `ts`, I set it up myself! It definitely worked last summer.
+
+**Lena:** Then something changed since last summer. Make old readings expire, keep the last 30 days, and make
+sure new readings expire too.
+"""
+description = """
+On **`node1`** (port 27017), `verdant.readings` should only hold the **last 30 days**: there's a TTL index on `ts`.
+Yet nothing has expired for about two months. An ingest job (`/srv/app/ingest.js`, re-read every ~20 s) keeps
+adding readings.
+
+1. Readings **older than 30 days disappear** (the TTL monitor runs every 5 s on this box), readings from the last
+   30 days stay.
+2. The TTL index on `ts` expires documents after **exactly 30 days** (2592000 s).
+3. Every `ts` is a real **date**: no other types left, and the ingest job writes dates from now on.
+4. Keep the `{ device: 1, ts: -1 }` index the dashboard uses.
+
+Admin: `admin` / `Verdant-Admin-2026` (authSource `admin`).
+"""
+hints = [
+  "`db.readings.aggregate([{ $group: { _id: { $type: '$ts' }, n: { $sum: 1 } } }])`: the TTL monitor only deletes documents whose indexed field is a **BSON date** (or an array of dates). Strings are ignored forever.",
+  "`db.readings.getIndexes()`: read the TTL index's `expireAfterSeconds` carefully. `db.runCommand({ collMod: 'readings', index: { keyPattern: { ts: 1 }, expireAfterSeconds: ... } })` changes it in place.",
+  "Fix the ingest job first (`new Date()`, not a string), or it keeps adding strings while you convert. Then convert in place with an update pipeline: `updateMany({ ts: { $type: 'string' } }, [{ $set: { ts: { $toDate: '$ts' } } }])`.",
+]
+solution = """
+```bash
+U='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/verdant?authSource=admin'
+sed -i 's/ts: new Date().toISOString()/ts: new Date()/' /srv/app/ingest.js
+mongosh "$U" --quiet <<'JS'
+db.readings.aggregate([{ $group: { _id: { $type: '$ts' }, n: { $sum: 1 } } }])
+db.runCommand({ collMod: 'readings', index: { keyPattern: { ts: 1 }, expireAfterSeconds: 2592000 } })
+db.readings.updateMany({ ts: { $type: 'string' } }, [{ $set: { ts: { $toDate: '$ts' } } }])
+JS
+sleep 30; mongosh "$U" --quiet --eval 'db.readings.countDocuments({ ts: { $type: "string" } })'   # strings the job added meanwhile
+```
+**Lesson:** a TTL index is a background job that deletes documents whose indexed field is a **date** older than
+`expireAfterSeconds`. A document whose field is a string, a number or missing is silently kept forever, so a
+small change in how an app serialises timestamps turns retention off without any error. Check field types with
+`$type`, fix producers before data, convert with an update pipeline (`$toDate`), and adjust TTL settings in
+place with `collMod`. Schema validation (`$jsonSchema` with `bsonType: 'date'`) would have caught the ingest
+change on day one.
+"""

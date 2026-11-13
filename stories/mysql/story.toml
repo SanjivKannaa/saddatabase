@@ -2,6 +2,7 @@ id = "mysql"
 engine = "mysql"
 title = "Lumen Books"
 subtitle = "A MySQL story: from an empty server to zero-downtime migrations"
+outro = "Story complete. You run Lumen Books' databases now."
 cast = [
   { name = "Priya", role = "CTO", avatar = "🧭" },
   { name = "Marco", role = "Backend developer", avatar = "🛠️" },

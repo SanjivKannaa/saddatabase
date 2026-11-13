@@ -262,6 +262,14 @@ def cmd_list(args):
 
 def cmd_story(args):
     st = load()
+    if not args.story and len(STORIES) > 1:      # several stories: list them
+        print(f"\n{bold('Story mode')}")
+        for sid, story in STORIES.items():
+            seq = story_seq(sid)
+            done = sum(1 for c in seq if (st["progress"].get(c) or {}).get("solves"))
+            print(f"  {bold(story['title']):<24} {ENGINES[story['engine']]['name']:<11} {dim(f'{done}/{len(seq)} chapters')}  {story.get('subtitle', '')}")
+            print(f"  {dim('saddb story ' + sid)}")
+        return
     sid = args.story or next(iter(STORIES), None)
     story = STORIES.get(sid) or die(f"no story {sid!r} (stories: {', '.join(STORIES) or 'none'})")
     print(f"\n{bold(story['title'])}  {dim(story.get('subtitle', ''))}")
@@ -282,7 +290,7 @@ def cmd_story(args):
                 nxt = slug
             pts = f"{p['best_score']}/{scoring.max_points(s['difficulty'])}" if p.get("solves") else f"≤{scoring.max_points(s['difficulty'])}"
             print(f"  {mark} {n}. {s['title']:<38} {DIFF[s['difficulty']](s['difficulty']):<17} {dim(slug + ' · ' + pts + ' pts')}")
-    print("\n" + (f"next: {bold('saddb start ' + nxt)}" if nxt else green("story complete 🎉")))
+    print("\n" + (f"next: {bold('saddb start ' + nxt)}" if nxt else green(story.get("outro", "story complete") + " 🎉")))
 
 
 def cmd_show(args):
@@ -324,7 +332,7 @@ def cmd_start(args):
     print(dim(f"booting your broken {ENGINES[s['engine']]['name']} box…"), end="", flush=True)
     cid = docker("run", "-d", "--rm", "--init", "--network", "none",
                  "--memory", lab.get("saddb.mem", "512m"), "--memory-swap", lab.get("saddb.mem", "512m"),
-                 "--cpus", "1", "--pids-limit", "256", "--security-opt", "no-new-privileges",
+                 "--cpus", "1", "--pids-limit", lab.get("saddb.pids", "256"), "--security-opt", "no-new-privileges",
                  "--cap-drop", "NET_RAW", "--cap-drop", "MKNOD", "--cap-drop", "AUDIT_WRITE",
                  "--hostname", f"sad-{s['slug']}"[:63], "--name", f"saddb-{s['slug']}-{now}",
                  "--label", f"{LABEL}=1", "--label", f"saddb.cli.slug={s['slug']}", image).stdout.strip()

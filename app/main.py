@@ -188,7 +188,7 @@ def story_view(st: dict, prog: dict) -> dict:
     e = ENGINES[st["engine"]]
     return {"id": st["id"], "title": st["title"], "subtitle": st.get("subtitle", ""), "engine": st["engine"],
             "engine_name": f"{e['name']} {e['version']}", "color": e["color"], "intro": st.get("intro", ""),
-            "cast": st.get("cast", []), "acts": acts, "chapters": n, "solved": done, "points": pts, "max_points": mx,
+            "cast": st.get("cast", []), "outro": st.get("outro", "Story complete."), "acts": acts, "chapters": n, "solved": done, "points": pts, "max_points": mx,
             "next": nxt}
 
 
@@ -285,20 +285,21 @@ def start_session(req: StartReq, u: dict = Depends(require_user)):
         sid = secrets.token_hex(12)
         expires = int(time.time()) + box_seconds(SCENARIOS[req.slug])
         mem = labels.get("saddb.mem", "512m")
+        pids = int(labels.get("saddb.pids", "256"))   # multi-node story bases need more (mongod is very threaded)
         store.start_attempt(u["id"], req.slug, sid, expires)
         ceiling = expires + config.MAX_EXTENSIONS * config.EXTEND_SECONDS   # label = hard max; DB holds the live expiry
-        c = _run_box(image, req.slug, sid, u["id"], ceiling, mem)
+        c = _run_box(image, req.slug, sid, u["id"], ceiling, mem, pids)
     return session_info(c)
 
 
-def _run_box(image: str, slug: str, sid: str, uid: int, expires: int, mem: str):
+def _run_box(image: str, slug: str, sid: str, uid: int, expires: int, mem: str, pids: int = 256):
     req_slug = slug
     return dk.containers.run(
         image, detach=True,
         name=f"saddb-{req_slug}-{sid[:6]}", hostname=f"sad-{req_slug}"[:63],
         labels={LABEL: sid, "saddb.slug": req_slug, "saddb.owner": str(uid), "saddb.expires": str(expires)},
         network_mode="none",           # no way in or out except docker exec
-        mem_limit=mem, memswap_limit=mem, nano_cpus=1_000_000_000, pids_limit=256,
+        mem_limit=mem, memswap_limit=mem, nano_cpus=1_000_000_000, pids_limit=pids,
         init=True, security_opt=["no-new-privileges"],
         cap_drop=["NET_RAW", "MKNOD", "AUDIT_WRITE", "SYS_CHROOT", "SETFCAP", "NET_BIND_SERVICE"],
     )

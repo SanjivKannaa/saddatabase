@@ -13,7 +13,7 @@ keys = ["slug", "engine", "title", "difficulty", "minutes", "order", "tags", "su
 scen = load_scenarios()
 stories = load_stories(scen)        # tags chapters with story/chapter
 cat = {"engines": ENGINES, "scenarios": [{k: s.get(k) for k in keys} for s in scen.values()],
-       "stories": [{k: st.get(k) for k in ("id", "engine", "title", "subtitle", "intro", "cast", "acts")} for st in stories.values()]}
+       "stories": [{k: st.get(k) for k in ("id", "engine", "title", "subtitle", "intro", "outro", "cast", "acts")} for st in stories.values()]}
 out = ROOT / "cli" / "saddb" / "catalog.json"
 new = json.dumps(cat, indent=1, ensure_ascii=False) + "\n"
 changed = not out.exists() or out.read_text() != new

@@ -1,0 +1,36 @@
+id = "mongo"
+engine = "mongo"
+title = "Verdant"
+subtitle = "A MongoDB story: from an open port to a healthy replica set"
+outro = "Story complete. Verdant's greenhouses report to a database you built."
+cast = [
+  { name = "Lena", role = "CTO", avatar = "🧭" },
+  { name = "Kofi", role = "Developer", avatar = "🛠️" },
+  { name = "Ana", role = "Customer support", avatar = "📟" },
+]
+intro = """
+**Verdant** makes sensors for commercial greenhouses: temperature, humidity, soil and CO₂, every minute, from
+six hundred devices across five sites. All of it lands in one MongoDB that Kofi set up from a tutorial, with
+the tutorial's settings.
+
+Lena just signed two big growers and wants the database to stop being the scary part. That's your job.
+
+Over the coming weeks you'll lock it down, recover from a bad `deleteMany`, turn one server into a replica set,
+untangle an arbiter that stalls every write and make old readings actually expire. Every chapter is a real box
+with real `mongod`s: you do the work, the grader checks it.
+"""
+
+[[acts]]
+title = "Act I · Day one"
+intro = "The database answers anyone, and someone just deleted the wrong devices. Two fires before lunch."
+chapters = ["mongo-story-01-auth", "mongo-story-02-restore"]
+
+[[acts]]
+title = "Act II · One is none"
+intro = "A single mongod is a single point of failure. You build a replica set, then fix the one Kofi built before you arrived."
+chapters = ["mongo-story-03-replset", "mongo-story-04-arbiter"]
+
+[[acts]]
+title = "Act III · Keeping it small"
+intro = "Readings are supposed to expire after 30 days. The disk says otherwise."
+chapters = ["mongo-story-05-ttl"]

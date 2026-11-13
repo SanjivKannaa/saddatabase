@@ -43,4 +43,5 @@ def load_stories(scenarios: dict[str, dict]) -> dict[str, dict]:
                     scenarios[slug]["chapter"] = n
         st["chapter_slugs"] = [c for a in st.get("acts", []) for c in a["chapters"]]
         out[st["id"]] = st
-    return out
+    order = list(ENGINES)
+    return dict(sorted(out.items(), key=lambda kv: order.index(kv[1]["engine"]) if kv[1].get("engine") in order else 99))

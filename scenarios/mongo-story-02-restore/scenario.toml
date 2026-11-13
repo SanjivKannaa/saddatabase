@@ -1,0 +1,58 @@
+engine = "mongo"
+base = "mongo-lab"
+title = "deleteMany, the wrong one"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 2
+tags = ["mongodb", "mongorestore", "mongodump", "$merge", "nsFrom/nsTo"]
+summary = "Every Porto device vanished. Restore the right ones from last night's dump without undoing today's changes."
+narrative = """
+**Ana:** The Porto growers' dashboards are empty. All of them. The sensors are still sending data, but the app
+says the devices don't exist.
+
+**Kofi:** I was cleaning up decommissioned devices in Porto. I typed `deleteMany({ site: 'Porto' })` and hit
+enter before adding the status. 😞
+
+**Lena:** Last night's dump is in `/backups`. Bring back the Porto devices, but only the ones Kofi *didn't*
+mean to delete: the decommissioned ones can stay gone. And other sites' devices changed today: don't undo that.
+"""
+description = """
+On **`node1`** (port 27017), `db.devices.deleteMany({ site: 'Porto' })` ran in `verdant` this morning. It was
+meant to be `deleteMany({ site: 'Porto', status: 'decommissioned' })`.
+
+1. Bring back every **Porto** device that **isn't decommissioned**, as it was in last night's dump
+   **`/backups/verdant-nightly.archive.gz`** (`mongodump --archive --gzip`).
+2. The decommissioned Porto devices stay **deleted** (that part of Kofi's intent was right).
+3. Every other device stays exactly as it is now: other sites had **firmware upgrades and new devices today**.
+4. Leave no temporary collections behind in `verdant`.
+
+Log in as `admin` / `Verdant-Admin-2026` (authSource `admin`).
+"""
+hints = [
+  "`mongorestore --drop` (or restoring over `verdant.devices` wholesale) brings back last night's version of *every* device, losing today's upgrades. Restore to a different collection instead: `--nsInclude 'verdant.devices' --nsFrom 'verdant.devices' --nsTo 'verdant.devices_restore'`.",
+  "mongorestore takes the same connection options as mongosh: `--uri 'mongodb://admin:...@127.0.0.1:27017/?authSource=admin'` plus `--archive=/backups/verdant-nightly.archive.gz --gzip`.",
+  "From the side collection, an aggregation can pick exactly the documents you want and write them into another collection without touching existing ones: `$match` then `$merge: { into: 'devices', whenMatched: 'keepExisting', whenNotMatched: 'insert' }`.",
+  "Then `db.devices_restore.drop()`.",
+]
+solution = """
+```bash
+U='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin'
+mongorestore --uri "$U" --archive=/backups/verdant-nightly.archive.gz --gzip \\
+  --nsInclude 'verdant.devices' --nsFrom 'verdant.devices' --nsTo 'verdant.devices_restore'
+mongosh "$U" --quiet <<'JS'
+use verdant
+db.devices_restore.aggregate([
+  { $match: { site: 'Porto', status: { $ne: 'decommissioned' } } },
+  { $merge: { into: 'devices', whenMatched: 'keepExisting', whenNotMatched: 'insert' } }
+])
+db.devices_restore.drop()
+db.devices.countDocuments({ site: 'Porto' })
+JS
+```
+**Lesson:** a logical dump can be restored **selectively**: one namespace (`--nsInclude`), renamed
+(`--nsFrom`/`--nsTo`) next to the live data instead of over it. From there, an aggregation with `$merge` is a
+precise tool: filter exactly the documents you need and insert only those that are missing, leaving today's
+versions untouched. Restoring with `--drop` would have been faster to type and quietly undone a day of other
+people's work. (And for the future: preview a `deleteMany` with `countDocuments` on the same filter first.)
+"""

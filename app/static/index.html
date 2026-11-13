@@ -158,7 +158,7 @@ button.nudge { border-color: var(--bad); color: var(--bad); }
     <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="7" rx="11" ry="4" fill="var(--accent)"/><path d="M5 7v18c0 2.2 4.9 4 11 4s11-1.8 11-4V7" fill="none" stroke="var(--accent)" stroke-width="2.5"/><circle cx="12" cy="17" r="1.5" fill="var(--accent)"/><circle cx="20" cy="17" r="1.5" fill="var(--accent)"/><path d="M11.5 23c2.5-2.2 6.5-2.2 9 0" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round"/></svg>
     sadDatabase
   </a>
-  <nav><a href="/story/mysql" data-link>Story</a><a href="/" data-link>Practice</a><a href="/leaderboard" data-link>Leaderboard</a></nav>
+  <nav><a href="/stories" data-link>Stories</a><a href="/" data-link>Practice</a><a href="/leaderboard" data-link>Leaderboard</a></nav>
   <span class="spacer"></span>
   <div class="who" id="who"></div>
 </header>
@@ -212,6 +212,7 @@ async function route() {
   try {
     if ((m = p.match(/^\/s\/([\w-]+)/))) return await scenarioView(m[1]);
     if ((m = p.match(/^\/t\/([\w-]+)/))) return await trackView(m[1]);
+    if (p === '/stories') return await storiesView();
     if ((m = p.match(/^\/story\/([\w-]+)/))) return await storyView(m[1]);
     if (p === '/me') return await meView();
     if (p === '/leaderboard') return await leaderboardView();
@@ -227,13 +228,8 @@ async function homeView() {
     <h1>Something is wrong with the database.</h1>
     <p class="lead">Pick a track. Each scenario boots a disposable box with a broken database and gives you a real shell.
       Find the problem, fix it, press <b>Check</b>. ${ME.user ? `You've solved <b>${solved} of ${total}</b>.` : 'Sign in to start a box and keep your progress.'}</p>
-    ${stories.map(st => `<a class="story-hero" href="/story/${st.id}" data-link>
-      <span class="kicker">Story mode · ${esc(st.engine_name)}</span>
-      <h2>${esc(st.title)}</h2>
-      <p class="lead" style="margin:0">${esc(st.subtitle)}. Install it, back it up, replicate it, fail it over, migrate it live: one chapter at a time.</p>
-      <div class="meta"><span>${st.chapters} chapters</span>${ME.user ? `<span>${st.solved} done</span><span class="pts">${st.points} / ${st.max_points} pts</span>` : `<span>${st.max_points} pts to earn</span>`}</div>
-      <div class="bar" style="max-width:420px"><i style="width:${st.chapters ? 100 * st.solved / st.chapters : 0}%"></i></div>
-    </a>`).join('')}
+    <div class="section-title">Story mode: one company, one database, chapter by chapter</div>
+    <div class="grid">${stories.map(storyCard).join('')}</div>
     <div class="section-title">Practice: incident drills by database</div>
     <div class="grid">${tracks.map(t => `
       <a class="card" href="/t/${t.engine}" data-link>
@@ -243,6 +239,25 @@ async function homeView() {
         <div class="bar"><i style="width:${t.scenarios.length ? 100 * t.solved / t.scenarios.length : 0}%"></i></div>
       </a>`).join('')}
     </div></main>`;
+}
+
+function storyCard(st) {
+  return `<a class="card" href="/story/${st.id}" data-link>
+    <div class="meta"><span class="engine-dot" style="background:${st.color}"></span><span>${esc(st.engine_name)}</span><span>${st.chapters} chapters</span></div>
+    <h3>${esc(st.title)}</h3><p>${esc(st.subtitle)}</p>
+    <div class="meta">${ME.user ? `<span>${st.solved} / ${st.chapters} done</span><span class="pts">${st.points} / ${st.max_points} pts</span>` : `<span>${st.max_points} pts to earn</span>`}</div>
+    <div class="bar"><i style="width:${st.chapters ? 100 * st.solved / st.chapters : 0}%"></i></div>
+  </a>`;
+}
+
+async function storiesView() {
+  const stories = await api('/api/stories');
+  document.title = 'Stories · sadDatabase';
+  $('#view').innerHTML = `<main>
+    <h1>Story mode</h1>
+    <p class="lead">Join a company as its first DBA. Each story is a run of chapters on real servers: build it, back it up,
+      replicate it, survive the 3 a.m. failure. Every chapter is graded like a practice scenario.</p>
+    <div class="grid">${stories.map(storyCard).join('')}</div></main>`;
 }
 
 /* ------------------------------------------------------------------ track flow */
@@ -282,7 +297,7 @@ async function storyView(id) {
     <div style="max-width:660px;margin-top:14px">${md(st.intro)}</div>
     <div style="max-width:420px;margin:16px 0"><div class="meta" style="margin-bottom:6px">${st.solved} / ${st.chapters} chapters${ME.user ? ` · <span class="pts">${st.points} / ${st.max_points} pts</span>` : ''}</div>
       <div class="bar"><i style="width:${100 * st.solved / st.chapters}%"></i></div></div>
-    ${st.next ? `<a class="btn primary" href="/s/${st.next}" data-link>${st.solved ? 'Continue' : 'Start'}: Chapter ${st.acts.flatMap(a => a.chapters).find(c => c.slug === st.next).chapter} →</a>` : `<p class="solved">🎉 Story complete. You run Lumen Books' databases now.</p>`}
+    ${st.next ? `<a class="btn primary" href="/s/${st.next}" data-link>${st.solved ? 'Continue' : 'Start'}: Chapter ${st.acts.flatMap(a => a.chapters).find(c => c.slug === st.next).chapter} →</a>` : `<p class="solved">🎉 ${esc(st.outro)}</p>`}
     ${st.acts.map(a => `<section class="act"><h2>${esc(a.title)}</h2><p>${esc(a.intro)}</p></section>
       <ol class="flow" style="margin-top:14px">${a.chapters.map(c => c.coming_soon ? `
         <li class="soon"><div class="step">${c.chapter}</div><div class="card"><h3>Chapter ${c.chapter}</h3><p>Coming soon.</p></div></li>` : `

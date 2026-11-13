@@ -22,7 +22,7 @@ bases() {
   done
 }
 label() { docker image inspect -f "{{index .Config.Labels \"saddb.$2\"}}" "saddb/$1:latest"; }
-run() { docker run -d --rm --init --network none --memory "$(label "$1" mem)" --pids-limit 256 --label saddb.test=1 "saddb/$1:latest"; }
+run() { docker run -d --rm --init --network none --memory "$(label "$1" mem)" --pids-limit "$(label "$1" pids | grep -xE "[0-9]+" || echo 256)" --label saddb.test=1 "saddb/$1:latest"; }
 wait_ready() { for i in $(seq 240); do docker exec "$1" test -f /run/sad-ready 2>/dev/null && return 0; sleep 0.5; done; echo "box not ready"; return 1; }
 case $cmd in
   bases) bases ;;

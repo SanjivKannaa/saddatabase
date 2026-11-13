@@ -1,0 +1,54 @@
+engine = "mongo"
+base = "mongo-lab"
+title = "The tutorial's settings"
+difficulty = "easy"
+minutes = 20
+box_minutes = 25
+order = 1
+tags = ["mongodb", "authentication", "rbac", "authSource", "bindIp"]
+summary = "Verdant's MongoDB listens everywhere with no auth. Turn on access control with an admin, an app user and a read-only user."
+narrative = """
+**Lena:** Our new customer's security team asked how our database is protected. I didn't have a good answer.
+
+**Kofi:** It's on a private network! Mostly. And the tutorial said auth was optional for development…
+
+**Lena:** We're not in development. I want an admin for us, an app user that can only touch `verdant`, and a
+read-only login for the support dashboard. Ana's dashboard must not be able to change anything.
+"""
+description = """
+**`node1`** (port 27017) runs without access control and listens on every interface. Databases: `verdant` (the
+app's) and `billing` (finance only).
+
+1. **Access control on**, listening on **localhost only**. Unauthenticated clients can't read anything.
+2. **`admin`** / `Verdant-Admin-2026` in the `admin` database, role **`root`**.
+3. **`verdant_app`** / `Verdant-App-2026`: **read and write `verdant`**, nothing else (not `billing`). The app
+   connects with the string in `/srv/app/app.env`: **don't change it**.
+4. **`verdant_ro`** / `Verdant-RO-2026`: **read-only** on `verdant`, same `authSource` as the app.
+5. It all survives a restart (the grader restarts node1).
+"""
+hints = [
+  "The **localhost exception**: with access control on and no users yet, a client on localhost can create the first user. Or create the users first and turn auth on afterwards.",
+  "Look at the app's connection string: `authSource=verdant` means its user must be created **in the `verdant` database** (`use verdant` then `db.createUser(...)`), not in `admin`.",
+  "`roles: [{ role: 'readWrite', db: 'verdant' }]` for the app, `'read'` for the dashboard, `[{ role: 'root', db: 'admin' }]` for the admin.",
+  "In `/etc/mongodb/nodes/node1.conf`: `net.bindIp: 127.0.0.1` and a `security:` section with `authorization: enabled`. Then `dbctl restart node1`.",
+]
+solution = """
+```bash
+node1 --quiet <<'JS'
+use admin
+db.createUser({ user: 'admin', pwd: 'Verdant-Admin-2026', roles: [{ role: 'root', db: 'admin' }] })
+use verdant
+db.createUser({ user: 'verdant_app', pwd: 'Verdant-App-2026', roles: [{ role: 'readWrite', db: 'verdant' }] })
+db.createUser({ user: 'verdant_ro', pwd: 'Verdant-RO-2026', roles: [{ role: 'read', db: 'verdant' }] })
+JS
+sed -i 's/bindIp: 0.0.0.0/bindIp: 127.0.0.1/' /etc/mongodb/nodes/node1.conf
+printf 'security:\\n  authorization: enabled\\n' >> /etc/mongodb/nodes/node1.conf
+dbctl restart node1
+. /srv/app/app.env && mongosh "$MONGO_URL" --quiet --eval 'db.devices.countDocuments()'
+```
+**Lesson:** without `authorization: enabled`, anyone who reaches the port is effectively root. Turn it on, bind
+to the interfaces you mean, and give every client a user with the narrowest built-in role that works (`read`,
+`readWrite`, scoped to one database). A user lives in the database it was created in, its **authentication
+database**, which is what `authSource` in the connection string names. Getting that wrong is the most common
+"but the password is right!" problem with MongoDB.
+"""

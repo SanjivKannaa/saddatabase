@@ -3,12 +3,29 @@
 Broken databases, real shells. A SadServers-style trainer for DBA skills: pick a track, get a
 terminal in the browser on a disposable box with a broken database, fix it, press **Check**.
 
-**Tracks:** PostgreSQL 17 (7 scenarios), MySQL 8.4 (4), MongoDB 7.0 (4), Redis 8 (3).
+**Tracks:** PostgreSQL 17 (7 scenarios), MySQL 8.4 (10), MongoDB 7.0 (4), Redis 8 (3), plus four story-mode campaigns (27 chapters).
 Sign in with Google; progress, attempts, checks, hints and solution peeks are stored per user, with a
 profile page and a leaderboard (clean solves first).
 
-## Story mode: *Lumen Books* (MySQL)
-You're the first DBA at an online bookstore. Nine chapters, each a real box with up to three `mysqld` nodes:
+## Story mode
+Four stories, one per engine: you join a company as its first DBA and work through chapters on real multi-node
+boxes. Chapters are graded like practice scenarios (and score the same way).
+
+### *Parcelpoint* (PostgreSQL 17)
+A parcel-delivery startup on a hackathon-era PostgreSQL 16 server. Up to three nodes (`node1..3`, ports 5432-5434).
+
+| Act | Chapter | You do |
+|---|---|---|
+| I · Day one | 1 A cluster of your own | `initdb` done right: checksums, scram, no `trust`, owner vs app role, schema grants |
+| | 2 Off the hackathon server | `pg_upgrade` 16 → 17: matching checksums, preload libraries, statistics afterwards |
+| II · Don't lose the data | 3 DELETE without a WHERE | PITR from base backup + WAL archive into a side copy (paused, no new timeline in the archive) |
+| III · A second copy | 4 A second copy | streaming hot standby: `max_wal_senders`, replication role + `pg_hba`, slot, `pg_basebackup -R` |
+| | 5 pg_wal is eating the disk | an abandoned slot and a failing `archive_command` pin WAL; `max_slot_wal_keep_size` |
+| IV · When the primary dies | 6 The primary is gone | promote the right standby (one is a week stale), a copied `synchronous_standby_names` hangs writes, re-home, `pg_rewind` the old primary |
+| V · The long tail | 7 Vacuum can't keep up | xmin horizon held by a forgotten prepared transaction and an idle-in-transaction session |
+
+### *Lumen Books* (MySQL 8.4)
+An online bookstore. Up to three `mysqld` nodes (ports 3306-3308).
 
 | Act | Chapter | You do |
 |---|---|---|
@@ -22,16 +39,42 @@ You're the first DBA at an online bookstore. Nine chapters, each a real box with
 | | 8 Let the robot do it | configure orchestrator (Percona 3.2.6-24); the grader kills the primary and it must recover |
 | V · Change without downtime | 9 ALTER TABLE without the freeze | gh-ost 1.1.11 under live traffic; blocking ALTERs are detected |
 
-The story lives in `stories/mysql/story.toml` (intro, cast, acts → chapter slugs); chapters are ordinary scenarios
-(`scenarios/mysql-story-*`) with `base = "mysql-lab"`, a `narrative` and an optional `box_minutes`.
-`images/mysql-lab-base` runs nodes `node1..3` (ports 3306–3308) with `dbctl start|stop|status nodeN`, `node1/2/3`
-clients, `orcctl` for orchestrator, and the tools from `bin/fetch-vendor` (MySQL tarball, gh-ost, orchestrator;
-checksums pinned in `images/mysql-lab-base/vendor.sha256`, downloads gitignored).
+### *Verdant* (MongoDB 7.0)
+Greenhouse sensors. Up to three `mongod` nodes (ports 27017-27019).
+
+| Act | Chapter | You do |
+|---|---|---|
+| I · Day one | 1 The tutorial's settings | access control: admin/app/read-only users, `authSource`, `bindIp` |
+| | 2 deleteMany, the wrong one | selective `mongorestore` (`--nsFrom/--nsTo`) + `$merge`, without undoing today's changes |
+| II · One is none | 3 One is none | standalone → 3-member replica set with keyfile auth, explicit `rs.initiate` hosts |
+| | 4 The arbiter can't vote for your data | PSA with a dead secondary stalls `w:majority`; fix the keyfile, replace the arbiter, default write concern |
+| III · Keeping it small | 5 The readings that never expire | TTL ignores string dates: fix the producer, `$toDate`, `collMod` the TTL |
+
+### *Quickbite* (Redis 8)
+Food delivery. Several `redis-server` nodes and Sentinels per box (`node1..3` on 6379-6381, more where a chapter needs them).
+
+| Act | Chapter | You do |
+|---|---|---|
+| I · Day one | 1 Anyone can FLUSHALL | ACL users (`~qb:* -@dangerous`), `default` off, bind/protected-mode, `CONFIG REWRITE` |
+| | 2 Everyone's cart is empty | merge last night's RDB back via a side instance + `MIGRATE COPY` (TTLs kept), AOF at runtime; graded with `kill -9` |
+| II · More than one | 3 NOREPLICAS | a replica for `min-replicas-to-write 1`: least-privilege replication user, `replica-read-only` |
+| | 4 Let the robot promote | three Sentinels, quorum 2; the grader kills the primary, and the old one must rejoin (`masterauth`) |
+| III · Fast, again | 5 The two-second hiccup | slowlog hunt: `KEYS` → `SCAN`, big `DEL` → `UNLINK`/lazyfree |
+| IV · Outgrowing one box | 6 Six nodes, 16384 slots | 3+3 Redis Cluster, `--cluster import --cluster-copy`, replica auth |
+
+### How stories are built
+A story lives in `stories/<engine>/story.toml` (intro, cast, `outro`, acts → chapter slugs); chapters are ordinary
+scenarios (`scenarios/<engine>-story-*`) with `base = "<engine>-lab"`, a `narrative` and an optional `box_minutes`.
+Each engine has a lab base image that runs several nodes in one box with `dbctl start|stop|status nodeN`, `node1..3`
+clients and a shared data loader: `images/pg-lab-base` (PostgreSQL 17 + 16 binaries), `images/mysql-lab-base`
+(tools from `bin/fetch-vendor`: MySQL tarball, gh-ost, orchestrator; checksums pinned in `vendor.sha256`),
+`images/mongo-lab-base`, `images/redis-lab-base` (also `dbctl start sentinelN`). An image can ask for more
+processes with a `saddb.pids` label (default 256; the MongoDB base uses 768).
 
 ## Play in your terminal (no login)
 ```
 uv tool install "git+https://github.com/SanjivKannaa/saddatabase#subdirectory=cli"
-saddb story                                  # the Lumen Books story, chapter by chapter
+saddb story                                  # the stories; saddb story postgres|mysql|mongo|redis for chapters
 saddb list && saddb start pg-wont-start      # then: saddb check / hint / extend / end / progress
 ```
 Only needs Docker. Same scenarios and scoring as the website, progress kept locally. See [cli/README.md](cli/README.md).
@@ -61,7 +104,7 @@ On magickite it's published as https://sad.db.magickite by `sudo deploy/install-
 
 ## How it works
 - **One container per play session** from `saddb/<slug>:latest`: `--network none`, memory from the image's
-  `saddb.mem` label, 1 CPU, 256 pids, `no-new-privileges`. Labelled with its owner, and every API and
+  `saddb.mem` label, 1 CPU, 256 pids (or the `saddb.pids` label), `no-new-privileges`. Labelled with its owner, and every API and
   terminal call checks ownership. The reaper removes expired boxes and closes their attempts.
 - **The player** is the database's service account (`postgres`, `mysql`, `mongodb`, `redis`; image label
   `saddb.user`), without sudo, with `dbctl start|stop|restart|status`. `/opt/sad` (graders, setup) is root-only.

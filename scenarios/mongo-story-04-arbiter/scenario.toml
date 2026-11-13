@@ -1,0 +1,55 @@
+engine = "mongo"
+base = "mongo-lab"
+title = "The arbiter can't vote for your data"
+difficulty = "hard"
+minutes = 35
+box_minutes = 35
+order = 4
+tags = ["mongodb", "replica set", "arbiter", "write concern", "majority", "keyFile"]
+summary = "Majority writes hang on a PSA replica set. Bring the secondary back, then replace the arbiter so it can't happen again."
+narrative = """
+**Ana:** Sensor readings stopped saving around midnight. The devices retry, so we've lost nothing *yet*, but
+the buffers on the greenhouse gateways fill up in a few hours.
+
+**Kofi:** That's the replica set I built before you joined: a primary, a secondary and an arbiter, to save a
+server. The primary is up! Why would writes fail?
+
+**Lena:** Get writes going, and then fix the design so one server going down can't stop us again.
+"""
+description = """
+Replica set **`rs0`**: **`node1`** (27017) primary, **`node2`** (27018) secondary, **`node3`** (27019)
+**arbiter**. node2 went down last night and won't start. The ingest app writes readings with
+**`w: 'majority'`** and they time out.
+
+1. Get **node2** running again as a healthy secondary, so majority writes succeed.
+2. Then **replace the arbiter**: node3 becomes a **data-bearing**, voting member with a full copy of the data.
+   No arbiters left.
+3. Make **`w: 'majority'`** the cluster-wide **default write concern**.
+4. The ingest app (it uses the replica set connection string) is saving readings again.
+
+Admin: `admin` / `Verdant-Admin-2026` (authSource `admin`). Configs: `/etc/mongodb/nodes/nodeN.conf`.
+"""
+hints = [
+  "Why won't node2 start? `dbctl start node2` and its log (`/var/log/mongodb/node2.log`) say exactly what it doesn't like.",
+  "With an arbiter, a 3-member set has only **two** members that can acknowledge a write. Lose either and a majority of data-bearing members is impossible: `w: 'majority'` writes wait (and the primary's cache fills with history it can't discard).",
+  "An arbiter can't be converted in place: `rs.remove('127.0.0.1:27019')`, stop node3, empty its `dbPath` (`/srv/mongo/node3`), start it again and `rs.add('127.0.0.1:27019')`: it does an initial sync like any new member.",
+  "`db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: 'majority' } })` sets the cluster-wide default; `db.adminCommand({ getDefaultRWConcern: 1 })` shows it.",
+]
+solution = """
+```bash
+dbctl start node2                                   # "permissions on /etc/mongodb/keyfile-node2 are too open"
+chmod 400 /etc/mongodb/keyfile-node2 && dbctl start node2
+A='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017,127.0.0.1:27018/admin?authSource=admin&replicaSet=rs0'
+mongosh "$A" --quiet --eval 'rs.remove("127.0.0.1:27019")'
+dbctl stop node3 && rm -rf /srv/mongo/node3/* && dbctl start node3
+mongosh "$A" --quiet --eval 'rs.add("127.0.0.1:27019")'
+mongosh "$A" --quiet --eval 'db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: "majority" } })'
+sleep 15; mongosh "$A" --quiet --eval 'rs.status().members.map(m => m.name + " " + m.stateStr)'
+```
+**Lesson:** an arbiter votes in elections but holds no data, so in a Primary-Secondary-Arbiter set **one**
+data-bearing member going down leaves the primary unable to reach a majority of data-bearing members:
+`w: 'majority'` writes block, the majority commit point stops moving and the primary's WiredTiger cache fills
+with history it must keep. Three data-bearing members (PSS) tolerate one failure with no such cliff. If you must
+run an arbiter, know that `w: 'majority'` and PSA don't mix. And the keyfile, like an SSH key, must be readable
+only by its owner: mongod refuses to start otherwise.
+"""

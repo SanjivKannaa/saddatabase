@@ -1,0 +1,54 @@
+engine = "mongo"
+base = "mongo-lab"
+title = "One is none"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 3
+tags = ["mongodb", "replica set", "keyFile", "rs.initiate", "write concern"]
+summary = "Turn the standalone into a three-member replica set with keyfile auth, keeping every reading."
+narrative = """
+**Lena:** The big grower's contract says "no single point of failure". Right now our whole product is one
+`mongod`. Kofi set up two more servers last week.
+
+**Kofi:** They're running, empty. I tried `rs.initiate()` on the first one and it complained about the hostname,
+so I stopped.
+
+**Lena:** Make it a replica set. The app's new connection string is already in place.
+"""
+description = """
+**`node1`** (27017) is a standalone with access control and all of `verdant`. **`node2`** (27018) and
+**`node3`** (27019) are running, empty, standalone.
+
+1. One replica set named **`rs0`** with all three as **voting, data-bearing members** (hosts `127.0.0.1:2701x`):
+   one PRIMARY, two healthy SECONDARYs.
+2. Members **authenticate to each other with a keyfile**; access control stays on.
+3. No data lost: every secondary has all of `verdant`, and a write with **`w: 'majority'`** succeeds.
+4. The app's connection string (`/srv/app/app.env`, `replicaSet=rs0`) works as it is.
+
+Admin: `admin` / `Verdant-Admin-2026` (authSource `admin`). Configs: `/etc/mongodb/nodes/nodeN.conf`.
+"""
+hints = [
+  "Every member needs `replication.replSetName: rs0` in its config, and with access control on they need a shared **keyfile**: `security.keyFile`. It's a startup setting, so restart each node.",
+  "A keyfile is 6 to 1024 base64 characters (`openssl rand -base64 756 > /etc/mongodb/keyfile`), and mongod refuses one that others can read: `chmod 400`.",
+  "Plain `rs.initiate()` names the member after the machine's hostname, but mongod only listens on 127.0.0.1. Pass an explicit config: `rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: '127.0.0.1:27017' }, ...] })`.",
+  "Run `rs.initiate` on node1 (the one with the data) as `admin`. The empty members do an initial sync from it. `rs.status()` shows their progress.",
+]
+solution = """
+```bash
+openssl rand -base64 756 > /etc/mongodb/keyfile && chmod 400 /etc/mongodb/keyfile
+sed -i '/^security:/a\\  keyFile: /etc/mongodb/keyfile' /etc/mongodb/nodes/node1.conf
+printf 'security:\\n  keyFile: /etc/mongodb/keyfile\\n' | tee -a /etc/mongodb/nodes/node2.conf >> /etc/mongodb/nodes/node3.conf
+for n in 1 2 3; do printf 'replication:\\n  replSetName: rs0\\n' >> /etc/mongodb/nodes/node$n.conf; done
+dbctl restart
+mongosh 'mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin&directConnection=true' --quiet --eval '
+  rs.initiate({ _id: "rs0", members: [
+    { _id: 0, host: "127.0.0.1:27017" }, { _id: 1, host: "127.0.0.1:27018" }, { _id: 2, host: "127.0.0.1:27019" } ] })'
+sleep 10; mongosh 'mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin' --quiet --eval 'rs.status().members.map(m => m.name + " " + m.stateStr)'
+```
+**Lesson:** a replica set is the unit of high availability in MongoDB: members replicate the primary's
+**oplog**, elect a new primary when it fails, and `w: 'majority'` makes a write wait until it can't be rolled
+back. Converting a standalone keeps its data: restart it with a `replSetName`, initiate, and empty members copy
+everything with an initial sync. With access control on, members prove they belong with a keyfile (or x.509),
+and host names in the config must be addresses the members actually listen on.
+"""

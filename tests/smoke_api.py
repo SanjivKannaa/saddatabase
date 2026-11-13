@@ -32,7 +32,8 @@ def check(client, path, method="GET", want=200):
 with TestClient(app) as c:      # runs startup: DB init, reaper
     for p in ["/", "/api/me", "/api/tracks", "/api/scenarios/pg-wont-start", "/api/leaderboard",
               "/api/leaderboard?engine=redis&period=30d", "/api/scoring", "/t/postgres", "/s/pg-wont-start",
-              "/api/stories", "/api/stories/mysql", "/story/mysql", "/api/scenarios/mysql-story-01-install"]:
+              "/api/stories", "/api/stories/mysql", "/story/mysql", "/stories",
+              "/api/stories/postgres", "/api/stories/redis", "/api/stories/mongo", "/api/scenarios/mysql-story-01-install"]:
         check(c, p)
     check(c, "/api/me/history", want=401)
     check(c, "/api/scenarios/pg-wont-start/hint", "POST", want=401)
@@ -50,6 +51,13 @@ with TestClient(app) as c:      # runs startup: DB init, reaper
     st = check(c, "/api/stories/mysql").json()
     if st.get("chapters") != 9 or st["acts"][0]["chapters"][0]["slug"] != "mysql-story-01-install":
         fails += 1; print("BAD story structure:", {k: st.get(k) for k in ("chapters", "next")})
+    sts = check(c, "/api/stories").json()
+    if [x["id"] for x in sts] != ["postgres", "mysql", "mongo", "redis"]:
+        fails += 1; print("BAD story list/order:", [x["id"] for x in sts])
+    for sid, n, first in [("postgres", 7, "pg-story-01-initdb"), ("redis", 6, "redis-story-01-lockdown"), ("mongo", 5, "mongo-story-01-auth")]:
+        x = check(c, f"/api/stories/{sid}").json()
+        if x.get("chapters") != n or x["acts"][0]["chapters"][0]["slug"] != first or not x.get("outro") or any(c.get("coming_soon") for a in x["acts"] for c in a["chapters"]):
+            fails += 1; print(f"BAD {sid} story structure:", {k: x.get(k) for k in ("chapters", "next", "outro")})
     ch = check(c, "/api/scenarios/mysql-story-03-pitr").json()
     if ch.get("chapter") != 3 or ch.get("next") != "mysql-story-04-replication" or not ch.get("narrative") or ch.get("box_minutes") != 30:
         fails += 1; print("BAD chapter nav:", {k: ch.get(k) for k in ("chapter", "next", "box_minutes")})

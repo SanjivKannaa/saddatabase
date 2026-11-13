@@ -52,6 +52,34 @@
    "box_minutes": null
   },
   {
+   "slug": "pg-story-01-initdb",
+   "engine": "postgres",
+   "title": "A cluster of your own",
+   "difficulty": "easy",
+   "minutes": 20,
+   "order": 1,
+   "tags": [
+    "postgres",
+    "initdb",
+    "pg_hba.conf",
+    "roles",
+    "schemas"
+   ],
+   "summary": "Build Parcelpoint's new cluster from nothing: initdb, sane auth, an owner role and an app role.",
+   "description": "The box has PostgreSQL 17 installed and **no cluster**. Build one to the spec in `~/README.md`:\n\n1. A cluster in **`/srv/pg/node1`** on **port 5432**, with **data checksums** on, listening on **localhost only**,\n   `shared_buffers = 256MB`. Keep the Unix socket in `/var/run/postgresql` (the default).\n2. **No `trust`** (and no clear-text `password`) lines in `pg_hba.conf`. Local socket logins for `postgres` stay possible.\n3. Database **`parcels`** (UTF8), owned by a **non-login** role **`parcels_owner`**.\n4. Login role **`parcels_app`** (password `Parcel-App-2026`, SCRAM) that can connect to `parcels` over\n   TCP (`127.0.0.1`) and **create tables in schema `app`**. It is not a superuser and doesn't own the database.\n\nRun the server with `dbctl start node1`. The grader restarts it, so settings must be in the config, not just `SET`.\n",
+   "hints": [
+    "`initdb --help`: look at `--data-checksums`, `--auth-local` and `--auth-host`. Without them initdb configures `trust` for every local connection (it even warns you).",
+    "Settings go in `/srv/pg/node1/postgresql.conf` (or `ALTER SYSTEM`, which writes `postgresql.auto.conf`): `port`, `listen_addresses = 'localhost'`, `shared_buffers`. `shared_buffers` needs a restart.",
+    "Since PostgreSQL 15 nobody but the database owner can create objects in `public`. Make a schema `app` owned by `parcels_owner` and `GRANT USAGE, CREATE ON SCHEMA app TO parcels_app`.",
+    "Check your `pg_hba.conf` the way the server sees it: `SELECT type, database, user_name, address, auth_method FROM pg_hba_file_rules;`"
+   ],
+   "solution": "```bash\ninitdb -D /srv/pg/node1 --data-checksums -E UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=scram-sha-256\ncat >> /srv/pg/node1/postgresql.conf <<'CONF'\nport = 5432\nlisten_addresses = 'localhost'\nshared_buffers = 256MB\nCONF\ndbctl start node1\nnode1 <<'SQL'\nCREATE ROLE parcels_owner NOLOGIN;\nCREATE ROLE parcels_app LOGIN PASSWORD 'Parcel-App-2026';\nCREATE DATABASE parcels OWNER parcels_owner ENCODING 'UTF8';\n\\c parcels\nCREATE SCHEMA app AUTHORIZATION parcels_owner;\nGRANT USAGE, CREATE ON SCHEMA app TO parcels_app;\nSQL\nPGPASSWORD=Parcel-App-2026 psql -h 127.0.0.1 -U parcels_app -d parcels -c 'CREATE TABLE app.hello (id int)'\n```\n**Lesson:** a bare `initdb` gives you `trust` authentication (anyone on the box is any user, including the\nsuperuser) and no checksums. Decide auth at initdb time with `--auth-local=peer --auth-host=scram-sha-256`.\nTurn on checksums so silent disk corruption is detected (and so `pg_rewind` works later without `wal_log_hints`).\nSeparate the **owner** of the data (a role nobody logs in as) from the **app login**, and grant the app exactly\nwhat it needs. Since PostgreSQL 15, `public` is no longer a free-for-all, so give the app its own schema.\n",
+   "story": "postgres",
+   "chapter": 1,
+   "narrative": "**Dana:** Before you touch the old server, show me what *right* looks like. Here's an empty box. I want a cluster\nI'd be happy to put customer data on: checksums, no `trust` anywhere, a database the app doesn't own, and an app\nlogin that can create its own tables and nothing more.\n\n**Tomás:** Last time I just ran `initdb` and it worked fine? 🙂\n\n**Dana:** That's what worries me.\n",
+   "box_minutes": 25
+  },
+  {
    "slug": "pg-wont-start",
    "engine": "postgres",
    "title": "It won't start",
@@ -75,6 +103,34 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "pg-story-02-upgrade",
+   "engine": "postgres",
+   "title": "Off the hackathon server",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 2,
+   "tags": [
+    "postgres",
+    "pg_upgrade",
+    "major upgrade",
+    "extensions",
+    "statistics"
+   ],
+   "summary": "Upgrade production from PostgreSQL 16 to 17 with pg_upgrade, without losing data, extensions or plans.",
+   "description": "**`node1`** (`/srv/pg/node1`, port 5432) runs **PostgreSQL 16** with the `parcels` database. The app is stopped\nfor the maintenance window. Upgrade it to **PostgreSQL 17** with `pg_upgrade`:\n\n1. When you're done, **PostgreSQL 17** answers on **port 5432** with all of `parcels`: every row, the\n   `pg_trgm` search index and the `pg_stat_statements` view working.\n2. The old 16 server stays **stopped**.\n3. `parcels_app` logs in over TCP with its **existing password**. No `trust` in the new `pg_hba.conf`.\n4. The planner has **statistics** for the upgraded tables (PostgreSQL 17's `pg_upgrade` doesn't carry them).\n\nPut the new cluster in `/srv/pg/node2` (`dbctl` manages every `/srv/pg/nodeN`). Binaries:\n`/usr/lib/postgresql/16/bin` and `/usr/lib/postgresql/17/bin` (17 is first in your `PATH`).\nThe grader restarts the new server.\n",
+   "hints": [
+    "Run `pg_upgrade ... --check` first: it tells you what doesn't match without changing anything. Both servers must be stopped. Run it from a directory you can write to (`cd ~`).",
+    "The new cluster must be initialised compatibly with the old one, notably the same **data checksums** setting (`pg_upgrade` won't switch them on or off for you). Ask the old one: `node1 -c 'SHOW data_checksums'` (before you stop it).",
+    "`pg_upgrade` copies data, not configuration. Compare `/srv/pg/node1/postgresql.conf` with the new one: the port, `listen_addresses` and the libraries the old server preloads.",
+    "After the upgrade, `vacuumdb --all --analyze-in-stages` gives the planner rough statistics fast, then better ones. `pg_upgrade` even prints that command."
+   ],
+   "solution": "```bash\nnode1 -c 'SHOW data_checksums' -c 'SHOW shared_preload_libraries'   # on, pg_stat_statements\ninitdb -D /srv/pg/node2 --data-checksums -E UTF8 --locale=C --auth-local=peer --auth-host=scram-sha-256\ncat >> /srv/pg/node2/postgresql.conf <<'CONF'\nport = 5432\nlisten_addresses = 'localhost'\nshared_preload_libraries = 'pg_stat_statements'\nCONF\ndbctl stop node1\ncd ~\npg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link --check\npg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link\ndbctl start node2\nvacuumdb --all --analyze-in-stages\n```\n**Lesson:** `pg_upgrade` rewrites the system catalogs for the new version and reuses the data files (`--link`\nhard-links them: minutes instead of hours, but the old cluster is unusable once the new one starts). The new\ncluster must match the old one's checksum setting, so check it before `initdb` (since 16, `pg_upgrade` copies\nthe old encoding and locale for you). It\ndoesn't bring `postgresql.conf` or `pg_hba.conf` along, so carry over anything that matters (here\n`shared_preload_libraries`). And until PostgreSQL 18, it doesn't bring planner statistics either: analyze\nright away, or the first hour after the upgrade is full of terrible plans.\n",
+   "story": "postgres",
+   "chapter": 2,
+   "narrative": "**Dana:** Production is still on 16, on the cluster Tomás made at a hackathon. Tonight is our maintenance\nwindow: the shop's in read-only mode from 23:00 to 01:00. Get it onto 17.\n\n**Tomás:** Can't we just dump and restore? It's only a few gigs.\n\n**Dana:** Today it is. Learn `pg_upgrade` now, while it's small.\n",
+   "box_minutes": 30
   },
   {
    "slug": "pg-locked-out",
@@ -102,6 +158,62 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "pg-story-03-pitr",
+   "engine": "postgres",
+   "title": "DELETE without a WHERE",
+   "difficulty": "hard",
+   "minutes": 35,
+   "order": 3,
+   "tags": [
+    "postgres",
+    "pitr",
+    "pg_basebackup",
+    "wal archiving",
+    "recovery_target"
+   ],
+   "summary": "Every shipment is gone. Restore them to the second before the DELETE, without losing anything else.",
+   "description": "On **`node1`** (port 5432), `DELETE FROM shipments` ran without a `WHERE` this afternoon. The server is still up\nand other tables kept changing after the accident.\n\nRestore **`parcels.shipments` exactly as it was immediately before the DELETE**: last night's rows *and*\neverything created or updated today.\n\n- **`tracking_events` and `customers`** already have changes from *after* the DELETE: they must stay as they are now.\n- `node1` keeps running as the production server (same cluster, same timeline). Don't replace it with a restore.\n- The production WAL archive **`/srv/wal_archive`** must not get a new timeline from your restore.\n\nWhat you have: the nightly `pg_basebackup` in `/backups/nightly/` (tar format), the WAL archive in\n`/srv/wal_archive`, and node1's log in `/var/log/postgresql/node1.log`. A spare data directory `/srv/pg/node2`\n(port 5433) is yours to use.\n",
+   "hints": [
+    "The plan: restore the base backup into `/srv/pg/node2`, replay the archived WAL up to just before the DELETE, read the shipments from there, put them back into node1.",
+    "When did it happen? node1 logs data-changing statements: `grep -n 'DELETE FROM shipments' /var/log/postgresql/node1.log`. Each line starts with a millisecond timestamp. (`pg_waldump` on the archived segments works too.)",
+    "Restore: `mkdir -m 700 /srv/pg/node2`, extract `base.tar.gz` into it and `pg_wal.tar.gz` into its `pg_wal/`. In its `postgresql.auto.conf` set `port = 5433`, `archive_mode = off`, `restore_command = 'cp /srv/wal_archive/%f %p'`, `recovery_target_time = '<timestamp> UTC'`, then `touch /srv/pg/node2/recovery.signal` and `dbctl start node2`.",
+    "Don't promote the restored copy (that's what writes a new timeline's `.history` file). With the default `recovery_target_action = 'pause'` it stops at the target and stays readable: `pg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels` after emptying node1's table."
+   ],
+   "solution": "```bash\nT=$(grep -m1 'DELETE FROM shipments' /var/log/postgresql/node1.log | awk '{print $1, $2, $3}')\nmkdir -m 700 /srv/pg/node2\ntar -xzf /backups/nightly/base.tar.gz -C /srv/pg/node2\ntar -xzf /backups/nightly/pg_wal.tar.gz -C /srv/pg/node2/pg_wal\ncat >> /srv/pg/node2/postgresql.auto.conf <<CONF\nport = 5433\narchive_mode = off\nrestore_command = 'cp /srv/wal_archive/%f %p'\nrecovery_target_time = '$T'\nrecovery_target_action = 'pause'\nCONF\ntouch /srv/pg/node2/recovery.signal\ndbctl start node2\nnode2 -Atc 'select pg_get_wal_replay_pause_state()'        # paused\nnode2 -d parcels -Atc 'select count(*) from shipments'      # they're back\nnode1 -d parcels -c 'TRUNCATE shipments'\npg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels\ndbctl stop node2\n```\n**Lesson:** a base backup alone takes you back to last night. The **WAL archive** is what takes you to *any\nsecond since*: restore the base backup somewhere else, give it a `restore_command`, a `recovery_target_time`\n(or `_xid`, `_lsn`, `_name`) and a `recovery.signal`, and it replays history up to that point. Commits after the\ntarget are left out, so a target taken from the statement's start time stops just before the DELETE committed.\nRestore to a **side copy** and move only the damaged table back: production keeps everything that happened\nafter the accident. Keep the copy paused rather than promoted, and turn off its archiving, so it never writes a\nnew timeline into the production archive. And test this before you need it.\n",
+   "story": "postgres",
+   "chapter": 3,
+   "narrative": "**Inês:** The tracking page says \"no shipments found\" for everyone. Every. Single. Customer.\n\n**Tomás:** I was cleaning up old label-only shipments in psql and… I forgot the `WHERE`. In production. 😶\n\n**Dana:** We have last night's base backup and WAL archiving has been on since Tomás set it up. Never been\ntested, but here we are. Bring back **every shipment as it was right before that DELETE**, including today's.\nAnd whatever happened *after* the DELETE (tracking events, customer changes) stays.\n",
+   "box_minutes": 35
+  },
+  {
+   "slug": "pg-story-04-standby",
+   "engine": "postgres",
+   "title": "A second copy",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 4,
+   "tags": [
+    "postgres",
+    "streaming replication",
+    "pg_basebackup",
+    "replication slots",
+    "pg_hba.conf"
+   ],
+   "summary": "Build a hot standby of production with pg_basebackup, a replication role and a slot, while parcels keep moving.",
+   "description": "Make **`node2`** (`/srv/pg/node2`, port **5433**) a **streaming hot standby** of **`node1`** (port 5432), which is\ntaking live traffic right now.\n\n1. node2 streams from node1 using a **dedicated replication role** (not `postgres`, not a superuser),\n   authenticated with a password (SCRAM) over TCP `127.0.0.1`.\n2. node2 uses a **physical replication slot** on node1, so node1 keeps the WAL node2 still needs.\n3. node2 accepts **read-only queries** while it replicates, and stays a standby after a restart.\n4. node1 keeps serving the app: restart it if you must, but bring it straight back.\n\nThe grader writes on node1 and expects the row on node2 within seconds.\n",
+   "hints": [
+    "On node1: `SHOW max_wal_senders;`. A primary needs WAL sender processes to stream to a standby, and that setting only changes with a restart.",
+    "Create the role with `LOGIN REPLICATION PASSWORD '...'`, and add a `host replication <role> 127.0.0.1/32 scram-sha-256` line to node1's `pg_hba.conf`. The `replication` keyword in the database column is special: `all` doesn't cover it. Then `SELECT pg_reload_conf()` (or the restart).",
+    "`pg_basebackup -h 127.0.0.1 -p 5432 -U <role> -D /srv/pg/node2 -X stream -R -C -S node2` copies the cluster, creates the slot (`-C -S`) and writes `standby.signal` plus `primary_conninfo` (`-R`).",
+    "node2 is a copy of node1, *including its `port = 5432`*. Change node2's port before `dbctl start node2`."
+   ],
+   "solution": "```bash\nnode1 <<'SQL'\nALTER SYSTEM SET max_wal_senders = 10;\nCREATE ROLE replicator LOGIN REPLICATION PASSWORD 'Repl-Parcel-2026';\nSQL\necho \"host  replication  replicator  127.0.0.1/32  scram-sha-256\" >> /srv/pg/node1/pg_hba.conf\ndbctl restart node1\nPGPASSWORD=Repl-Parcel-2026 pg_basebackup -h 127.0.0.1 -p 5432 -U replicator -D /srv/pg/node2 -X stream -R -C -S node2 -c fast\nprintf \"port = 5433\\ncluster_name = 'node2'\\n\" >> /srv/pg/node2/postgresql.auto.conf\ndbctl start node2\nnode1 -c 'select application_name, usename, state, sync_state from pg_stat_replication'\nnode2 -c 'select status, sender_port, slot_name from pg_stat_wal_receiver'\n```\n**Lesson:** streaming replication needs three things on the primary: WAL senders (`max_wal_senders`, restart),\na role with the `REPLICATION` attribute, and a `pg_hba.conf` line for the special `replication` database.\n`pg_basebackup -R` does the rest: a consistent copy plus `standby.signal` and `primary_conninfo`, so the\nstandby comes back as a standby after any restart. The **slot** makes the primary keep WAL until the standby has\nit, so a standby that falls behind catches up instead of needing a rebuild. The flip side is the next chapter.\n",
+   "story": "postgres",
+   "chapter": 4,
+   "narrative": "**Dana:** After the DELETE, the board asked one question: \"what if the server itself dies?\" We need a live copy.\n`node2` is an empty data directory on the same box for now; we'll move it to its own hardware later.\n\n**Tomás:** I, uh, tuned some replication settings to zero last year to save memory. Shouldn't matter, right?\n",
+   "box_minutes": 30
   },
   {
    "slug": "pg-slow-query",
@@ -154,6 +266,64 @@
    "box_minutes": null
   },
   {
+   "slug": "pg-story-05-wal-disk",
+   "engine": "postgres",
+   "title": "pg_wal is eating the disk",
+   "difficulty": "medium",
+   "minutes": 25,
+   "order": 5,
+   "tags": [
+    "postgres",
+    "wal",
+    "replication slots",
+    "archive_command",
+    "max_slot_wal_keep_size"
+   ],
+   "summary": "pg_wal keeps growing on the primary. Find everything that pins WAL, fix it, and cap it for next time.",
+   "description": "On **`node1`** (port 5432, primary) the `pg_wal` directory keeps growing. **`node2`** (port 5433) is a healthy\nstreaming standby that must stay that way.\n\n1. Find **every** reason node1 keeps old WAL and remove it, so a checkpoint brings `pg_wal` back down (the\n   grader runs `CHECKPOINT` and expects it under **200 MB**).\n2. **WAL archiving** to `/srv/wal_archive` must work again (the grader switches WAL and watches it get archived).\n3. Set a **cap** so a forgotten slot can never fill the disk again (`max_slot_wal_keep_size`).\n4. **node2** keeps streaming from node1 through its slot.\n\nUseful views: `pg_replication_slots`, `pg_stat_archiver`, `pg_ls_waldir()`, and node1's log.\n",
+   "hints": [
+    "`SELECT slot_name, active, restart_lsn, pg_size_pretty(pg_current_wal_lsn() - restart_lsn) FROM pg_replication_slots;` A slot nobody consumes keeps every WAL segment since its `restart_lsn`, forever.",
+    "`SELECT * FROM pg_stat_archiver;` and `tail /var/log/postgresql/node1.log`. Segments waiting to be archived (`pg_wal/archive_status/*.ready`) are never removed either.",
+    "`pg_drop_replication_slot('...')` for the dead standby's slot (not node2's). Fix `archive_command` with `ALTER SYSTEM SET archive_command = '...'` and `SELECT pg_reload_conf()`: no restart needed.",
+    "`ALTER SYSTEM SET max_slot_wal_keep_size = '1GB'`: a slot that falls further behind than that gets invalidated instead of filling the disk."
+   ],
+   "solution": "```bash\nnode1 -c 'select slot_name, active, pg_size_pretty(pg_current_wal_lsn() - restart_lsn) from pg_replication_slots'\nnode1 -c 'select failed_count, last_failed_wal, last_archived_wal from pg_stat_archiver'\ngrep -m3 'archive command failed' /var/log/postgresql/node1.log      # cp: ... /srv/wal-archive/...: No such file or directory\nnode1 <<'SQL'\nSELECT pg_drop_replication_slot('node3');\nALTER SYSTEM SET archive_command = 'test ! -f /srv/wal_archive/%f && cp %p /srv/wal_archive/%f';\nALTER SYSTEM SET max_slot_wal_keep_size = '1GB';\nSELECT pg_reload_conf();\nSQL\nsleep 5; node1 -c 'CHECKPOINT' -c \"select pg_size_pretty(sum(size)) from pg_ls_waldir()\"\n```\n**Lesson:** the primary removes a WAL segment only when **nobody needs it any more**: not a replication slot\n(every slot, even one whose standby was deleted years ago), not the archiver (a failing `archive_command` keeps\nevery segment as `.ready` and retries forever), and not `wal_keep_size`. Monitor all three:\n`pg_replication_slots` for inactive slots and their retained bytes, `pg_stat_archiver` for failures. And set\n`max_slot_wal_keep_size`: losing a dead standby's slot is much better than losing the primary to a full disk.\n",
+   "story": "postgres",
+   "chapter": 5,
+   "narrative": "**Inês:** Disk alert on node1: `pg_wal` is almost 300 MB and climbing; it was 40 MB last month.\nIt only ever goes up.\n\n**Tomás:** We tried a node3 standby a while back, it didn't work out, so I deleted its data directory. Oh, and I\nmoved the archive folder when I tidied up `/srv`. Probably unrelated?\n\n**Dana:** Find out why WAL isn't being recycled and fix it. **Don't break node2**: it's our only standby.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "pg-story-06-failover",
+   "engine": "postgres",
+   "title": "The primary is gone",
+   "difficulty": "hard",
+   "minutes": 40,
+   "order": 6,
+   "tags": [
+    "postgres",
+    "failover",
+    "pg_promote",
+    "synchronous replication",
+    "pg_rewind",
+    "timelines"
+   ],
+   "summary": "node1 died mid-shift. Promote the right standby, get writes flowing, re-home the others and rejoin node1 with pg_rewind.",
+   "description": "**`node1`** (port 5432), the primary, has crashed and its host is offline. **`node2`** (5433) and **`node3`**\n(5434) were its standbys. The app reads its target from **`/srv/app/db.env`** (`DB_PORT`) and retries every\nfew hundred milliseconds.\n\n1. **Promote the right standby**: the new primary must have **every delivery the app was told was saved**.\n2. **Writes must work** on the new primary (the app and the grader both write), and the app points at it.\n3. The **other standby** streams from the new primary and is caught up.\n4. When node1's host comes back (Inês will tell you, watch `~/`), make node1 a **standby of the new primary**.\n   It must never accept writes again as a primary of its own.\n\nIn the end: one primary, two streaming standbys, the app writing to the primary. Replication role:\n`replicator`, password `Repl-Parcel-2026`.\n",
+   "hints": [
+    "Which standby has everything? `nodeN -c 'select pg_last_wal_replay_lsn(), pg_last_wal_receive_lsn()'` and `select * from pg_stat_wal_receiver` on each. Is node3 even connected? Read its log.",
+    "`select pg_promote()` on the standby you chose. If writes then hang forever, look at what the new primary is waiting for: `SHOW synchronous_standby_names;` (configs are often identical on every node).",
+    "To re-home a standby, edit `primary_conninfo` (and `primary_slot_name`) in its `postgresql.auto.conf`. Both reload without a restart, but the slot must exist on the new primary: `pg_create_physical_replication_slot('...')`.",
+    "node1 crashed while it was primary, so it may have WAL the new primary never got. `pg_rewind -D /srv/pg/node1 --source-server='port=5433 user=postgres dbname=postgres'` winds it back to the fork point. Then give it `standby.signal`, `primary_conninfo` and a slot, and start it.",
+    "`pg_rewind` copies the source's configuration files too: node1 now has node2's `postgresql.auto.conf` (port 5433!). Set node1's `port = 5432` (and `cluster_name`) again before starting it."
+   ],
+   "solution": "```bash\nfor n in 2 3; do node$n -Atc \"select $n, pg_last_wal_replay_lsn(), (select status from pg_stat_wal_receiver)\"; done\ntail -3 /var/log/postgresql/node3.log            # password authentication failed: node3 is a week behind\nnode2 -c 'select pg_promote()'\nnode2 <<'SQL'\nALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (node1, node3)';  -- or '' while you rebuild\nSELECT pg_reload_conf();\nSELECT pg_create_physical_replication_slot('node1');\nSELECT pg_create_physical_replication_slot('node3');\nSQL\nsed -i 's/^DB_PORT=.*/DB_PORT=5433/' /srv/app/db.env\ncat >> /srv/pg/node3/postgresql.auto.conf <<'CONF'\nprimary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parcel-2026 application_name=node3'\nprimary_slot_name = 'node3'\nCONF\nnode3 -c 'select pg_reload_conf()'\n# ... node1's host is back:\npg_rewind -D /srv/pg/node1 --source-server='port=5433 user=postgres dbname=postgres' --progress\ncat >> /srv/pg/node1/postgresql.auto.conf <<'CONF'     # pg_rewind copied node2's config: port 5433\nport = 5432\ncluster_name = 'node1'\nprimary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parcel-2026 application_name=node1'\nprimary_slot_name = 'node1'\nCONF\ntouch /srv/pg/node1/standby.signal\ndbctl start node1\nnode2 -c 'select application_name, state, sync_state from pg_stat_replication'\n```\n**Lesson:** promote the standby that has **all** acknowledged commits: with synchronous replication that's the\nsynchronous one, and you verify by comparing replay LSNs, not by trusting what people remember (node3 had been\nfailing to authenticate for a week, unnoticed). Promotion opens a new **timeline**. Standbys that are behind the\nfork point can follow it after you point them at the new primary; the old primary, which may have WAL past the\nfork, needs **`pg_rewind`** (possible because of data checksums or `wal_log_hints`) before it can rejoin, and\n`pg_rewind` brings the source's config files along, so re-check port and conninfo. Configs\ncopied to every node travel with the role change: a `synchronous_standby_names` that named the old standby makes\nthe new primary wait forever for a sync standby that doesn't exist.\n",
+   "story": "postgres",
+   "chapter": 6,
+   "narrative": "**Inês (03:12):** node1 just went dark. Power supply, I think, I'm driving to the office. The drivers' app can't\nsave deliveries. You have node2 and node3.\n\n**Tomás (half asleep):** node2 is the synchronous one. node3 is… fine? I rotated the replication password last\nweek, I think I updated everything.\n\n**Dana:** Get the app writing again without losing a single acknowledged delivery. And when Inês brings node1\nback, it must **not** come up as a second primary.\n",
+   "box_minutes": 40
+  },
+  {
    "slug": "pg-id-overflow",
    "engine": "postgres",
    "title": "Two billion events",
@@ -178,6 +348,34 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "pg-story-07-horizon",
+   "engine": "postgres",
+   "title": "Vacuum can't keep up",
+   "difficulty": "hard",
+   "minutes": 30,
+   "order": 7,
+   "tags": [
+    "postgres",
+    "vacuum",
+    "xmin horizon",
+    "prepared transactions",
+    "idle in transaction"
+   ],
+   "summary": "Autovacuum runs all day and removes nothing. Find what's holding the xmin horizon back, release it, and keep it from coming back.",
+   "description": "On **`node1`** (port 5432), autovacuum keeps visiting `parcels.tracking_events` but can't remove its dead rows:\nsomething holds back the **xmin horizon**.\n\n1. Find **everything** that holds the horizon back and release it, so that a plain `VACUUM tracking_events`\n   leaves (almost) no dead rows behind. The grader runs that VACUUM.\n2. The **reporting** login (`reporting`) keeps working, but an idle-in-transaction reporting session must be cut\n   off automatically within **an hour** at most (`idle_in_transaction_session_timeout`, for that role or wider).\n3. Parcelpoint doesn't use two-phase commit: **disable prepared transactions** (`max_prepared_transactions = 0`).\n4. node1 keeps running.\n\nStart with `pg_stat_activity` (`backend_xmin`, `state`, `xact_start`), `pg_prepared_xacts`, `pg_replication_slots`,\nand `VACUUM (VERBOSE) tracking_events`, which tells you *why* it couldn't remove rows.\n",
+   "hints": [
+    "`VACUUM (VERBOSE) tracking_events` prints `removable cutoff: N, which was M XIDs old when operation ended` and how many dead rows are `not yet removable`. Something has a snapshot or a transaction ID from long ago.",
+    "`SELECT pid, usename, state, xact_start, backend_xmin FROM pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY age(backend_xmin) DESC;` A session sitting `idle in transaction` in REPEATABLE READ keeps its snapshot (and the horizon) for as long as it stays open. `pg_terminate_backend(pid)`.",
+    "A prepared transaction survives disconnects *and restarts*, and holds the horizon like any open transaction: `SELECT * FROM pg_prepared_xacts;`, then `ROLLBACK PREPARED 'gid'` (or `COMMIT PREPARED`).",
+    "`ALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min'` applies to its new sessions. `max_prepared_transactions` needs a restart, and the server refuses to start with 0 while a prepared transaction still exists."
+   ],
+   "solution": "```bash\nnode1 -d parcels -c 'VACUUM (VERBOSE) tracking_events' 2>&1 | grep -E 'removable|dead'\nnode1 -c \"select pid, usename, state, xact_start, age(backend_xmin) from pg_stat_activity where backend_xmin is not null\"\nnode1 -c 'select gid, prepared, owner, database from pg_prepared_xacts'\nnode1 <<'SQL'\nSELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'reporting' AND state LIKE 'idle in transaction%';\n\\c parcels\nROLLBACK PREPARED 'billing_migration_step3';\nALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min';\nALTER SYSTEM SET max_prepared_transactions = 0;\nSQL\ndbctl restart node1\nnode1 -d parcels -c 'VACUUM (VERBOSE) tracking_events' 2>&1 | grep -E 'removable|dead'\n```\n**Lesson:** VACUUM can only remove a row version that **no transaction could still see**. The oldest snapshot\nor transaction ID anywhere in the cluster sets that limit, the *xmin horizon*: a long-running query, a session\nleft `idle in transaction`, a **forgotten prepared transaction** (it survives restarts), a replication slot's\n`xmin`, or a standby with `hot_standby_feedback`. While it's held, autovacuum runs and achieves nothing, tables\nbloat and, in the worst case, you head for transaction ID wraparound. Monitor `age(backend_xmin)` and\n`pg_prepared_xacts`, cap idle transactions with `idle_in_transaction_session_timeout`, and keep\n`max_prepared_transactions = 0` unless you really run two-phase commit. (The space already lost to bloat comes\nback with `VACUUM FULL`, which locks the table, or online with `pg_repack`.)\n",
+   "story": "postgres",
+   "chapter": 7,
+   "narrative": "**Inês:** `tracking_events` has a few hundred thousand live rows, and the dashboard says almost as many **dead** ones.\nAutovacuum runs on it every few seconds and finishes having removed… nothing.\n\n**Tomás:** Could it be the reporting tool? It keeps a connection open all day. Oh, and back in March I tried\ntwo-phase commit for the billing migration. Pretty sure I cleaned that up.\n\n**Dana:** Make vacuum work again, and make sure neither of those can quietly do this to us next time.\n",
+   "box_minutes": 30
   },
   {
    "slug": "pg-too-many-connections",
@@ -716,6 +914,34 @@
    "box_minutes": 30
   },
   {
+   "slug": "mongo-story-01-auth",
+   "engine": "mongo",
+   "title": "The tutorial's settings",
+   "difficulty": "easy",
+   "minutes": 20,
+   "order": 1,
+   "tags": [
+    "mongodb",
+    "authentication",
+    "rbac",
+    "authSource",
+    "bindIp"
+   ],
+   "summary": "Verdant's MongoDB listens everywhere with no auth. Turn on access control with an admin, an app user and a read-only user.",
+   "description": "**`node1`** (port 27017) runs without access control and listens on every interface. Databases: `verdant` (the\napp's) and `billing` (finance only).\n\n1. **Access control on**, listening on **localhost only**. Unauthenticated clients can't read anything.\n2. **`admin`** / `Verdant-Admin-2026` in the `admin` database, role **`root`**.\n3. **`verdant_app`** / `Verdant-App-2026`: **read and write `verdant`**, nothing else (not `billing`). The app\n   connects with the string in `/srv/app/app.env`: **don't change it**.\n4. **`verdant_ro`** / `Verdant-RO-2026`: **read-only** on `verdant`, same `authSource` as the app.\n5. It all survives a restart (the grader restarts node1).\n",
+   "hints": [
+    "The **localhost exception**: with access control on and no users yet, a client on localhost can create the first user. Or create the users first and turn auth on afterwards.",
+    "Look at the app's connection string: `authSource=verdant` means its user must be created **in the `verdant` database** (`use verdant` then `db.createUser(...)`), not in `admin`.",
+    "`roles: [{ role: 'readWrite', db: 'verdant' }]` for the app, `'read'` for the dashboard, `[{ role: 'root', db: 'admin' }]` for the admin.",
+    "In `/etc/mongodb/nodes/node1.conf`: `net.bindIp: 127.0.0.1` and a `security:` section with `authorization: enabled`. Then `dbctl restart node1`."
+   ],
+   "solution": "```bash\nnode1 --quiet <<'JS'\nuse admin\ndb.createUser({ user: 'admin', pwd: 'Verdant-Admin-2026', roles: [{ role: 'root', db: 'admin' }] })\nuse verdant\ndb.createUser({ user: 'verdant_app', pwd: 'Verdant-App-2026', roles: [{ role: 'readWrite', db: 'verdant' }] })\ndb.createUser({ user: 'verdant_ro', pwd: 'Verdant-RO-2026', roles: [{ role: 'read', db: 'verdant' }] })\nJS\nsed -i 's/bindIp: 0.0.0.0/bindIp: 127.0.0.1/' /etc/mongodb/nodes/node1.conf\nprintf 'security:\\n  authorization: enabled\\n' >> /etc/mongodb/nodes/node1.conf\ndbctl restart node1\n. /srv/app/app.env && mongosh \"$MONGO_URL\" --quiet --eval 'db.devices.countDocuments()'\n```\n**Lesson:** without `authorization: enabled`, anyone who reaches the port is effectively root. Turn it on, bind\nto the interfaces you mean, and give every client a user with the narrowest built-in role that works (`read`,\n`readWrite`, scoped to one database). A user lives in the database it was created in, its **authentication\ndatabase**, which is what `authSource` in the connection string names. Getting that wrong is the most common\n\"but the password is right!\" problem with MongoDB.\n",
+   "story": "mongo",
+   "chapter": 1,
+   "narrative": "**Lena:** Our new customer's security team asked how our database is protected. I didn't have a good answer.\n\n**Kofi:** It's on a private network! Mostly. And the tutorial said auth was optional for development…\n\n**Lena:** We're not in development. I want an admin for us, an app user that can only touch `verdant`, and a\nread-only login for the support dashboard. Ana's dashboard must not be able to change anything.\n",
+   "box_minutes": 25
+  },
+  {
    "slug": "mongo-wont-start",
    "engine": "mongo",
    "title": "mongod refuses to fork",
@@ -765,6 +991,62 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "mongo-story-02-restore",
+   "engine": "mongo",
+   "title": "deleteMany, the wrong one",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 2,
+   "tags": [
+    "mongodb",
+    "mongorestore",
+    "mongodump",
+    "$merge",
+    "nsFrom/nsTo"
+   ],
+   "summary": "Every Porto device vanished. Restore the right ones from last night's dump without undoing today's changes.",
+   "description": "On **`node1`** (port 27017), `db.devices.deleteMany({ site: 'Porto' })` ran in `verdant` this morning. It was\nmeant to be `deleteMany({ site: 'Porto', status: 'decommissioned' })`.\n\n1. Bring back every **Porto** device that **isn't decommissioned**, as it was in last night's dump\n   **`/backups/verdant-nightly.archive.gz`** (`mongodump --archive --gzip`).\n2. The decommissioned Porto devices stay **deleted** (that part of Kofi's intent was right).\n3. Every other device stays exactly as it is now: other sites had **firmware upgrades and new devices today**.\n4. Leave no temporary collections behind in `verdant`.\n\nLog in as `admin` / `Verdant-Admin-2026` (authSource `admin`).\n",
+   "hints": [
+    "`mongorestore --drop` (or restoring over `verdant.devices` wholesale) brings back last night's version of *every* device, losing today's upgrades. Restore to a different collection instead: `--nsInclude 'verdant.devices' --nsFrom 'verdant.devices' --nsTo 'verdant.devices_restore'`.",
+    "mongorestore takes the same connection options as mongosh: `--uri 'mongodb://admin:...@127.0.0.1:27017/?authSource=admin'` plus `--archive=/backups/verdant-nightly.archive.gz --gzip`.",
+    "From the side collection, an aggregation can pick exactly the documents you want and write them into another collection without touching existing ones: `$match` then `$merge: { into: 'devices', whenMatched: 'keepExisting', whenNotMatched: 'insert' }`.",
+    "Then `db.devices_restore.drop()`."
+   ],
+   "solution": "```bash\nU='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin'\nmongorestore --uri \"$U\" --archive=/backups/verdant-nightly.archive.gz --gzip \\\n  --nsInclude 'verdant.devices' --nsFrom 'verdant.devices' --nsTo 'verdant.devices_restore'\nmongosh \"$U\" --quiet <<'JS'\nuse verdant\ndb.devices_restore.aggregate([\n  { $match: { site: 'Porto', status: { $ne: 'decommissioned' } } },\n  { $merge: { into: 'devices', whenMatched: 'keepExisting', whenNotMatched: 'insert' } }\n])\ndb.devices_restore.drop()\ndb.devices.countDocuments({ site: 'Porto' })\nJS\n```\n**Lesson:** a logical dump can be restored **selectively**: one namespace (`--nsInclude`), renamed\n(`--nsFrom`/`--nsTo`) next to the live data instead of over it. From there, an aggregation with `$merge` is a\nprecise tool: filter exactly the documents you need and insert only those that are missing, leaving today's\nversions untouched. Restoring with `--drop` would have been faster to type and quietly undone a day of other\npeople's work. (And for the future: preview a `deleteMany` with `countDocuments` on the same filter first.)\n",
+   "story": "mongo",
+   "chapter": 2,
+   "narrative": "**Ana:** The Porto growers' dashboards are empty. All of them. The sensors are still sending data, but the app\nsays the devices don't exist.\n\n**Kofi:** I was cleaning up decommissioned devices in Porto. I typed `deleteMany({ site: 'Porto' })` and hit\nenter before adding the status. 😞\n\n**Lena:** Last night's dump is in `/backups`. Bring back the Porto devices, but only the ones Kofi *didn't*\nmean to delete: the decommissioned ones can stay gone. And other sites' devices changed today: don't undo that.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "mongo-story-03-replset",
+   "engine": "mongo",
+   "title": "One is none",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 3,
+   "tags": [
+    "mongodb",
+    "replica set",
+    "keyFile",
+    "rs.initiate",
+    "write concern"
+   ],
+   "summary": "Turn the standalone into a three-member replica set with keyfile auth, keeping every reading.",
+   "description": "**`node1`** (27017) is a standalone with access control and all of `verdant`. **`node2`** (27018) and\n**`node3`** (27019) are running, empty, standalone.\n\n1. One replica set named **`rs0`** with all three as **voting, data-bearing members** (hosts `127.0.0.1:2701x`):\n   one PRIMARY, two healthy SECONDARYs.\n2. Members **authenticate to each other with a keyfile**; access control stays on.\n3. No data lost: every secondary has all of `verdant`, and a write with **`w: 'majority'`** succeeds.\n4. The app's connection string (`/srv/app/app.env`, `replicaSet=rs0`) works as it is.\n\nAdmin: `admin` / `Verdant-Admin-2026` (authSource `admin`). Configs: `/etc/mongodb/nodes/nodeN.conf`.\n",
+   "hints": [
+    "Every member needs `replication.replSetName: rs0` in its config, and with access control on they need a shared **keyfile**: `security.keyFile`. It's a startup setting, so restart each node.",
+    "A keyfile is 6 to 1024 base64 characters (`openssl rand -base64 756 > /etc/mongodb/keyfile`), and mongod refuses one that others can read: `chmod 400`.",
+    "Plain `rs.initiate()` names the member after the machine's hostname, but mongod only listens on 127.0.0.1. Pass an explicit config: `rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: '127.0.0.1:27017' }, ...] })`.",
+    "Run `rs.initiate` on node1 (the one with the data) as `admin`. The empty members do an initial sync from it. `rs.status()` shows their progress."
+   ],
+   "solution": "```bash\nopenssl rand -base64 756 > /etc/mongodb/keyfile && chmod 400 /etc/mongodb/keyfile\nsed -i '/^security:/a\\  keyFile: /etc/mongodb/keyfile' /etc/mongodb/nodes/node1.conf\nprintf 'security:\\n  keyFile: /etc/mongodb/keyfile\\n' | tee -a /etc/mongodb/nodes/node2.conf >> /etc/mongodb/nodes/node3.conf\nfor n in 1 2 3; do printf 'replication:\\n  replSetName: rs0\\n' >> /etc/mongodb/nodes/node$n.conf; done\ndbctl restart\nmongosh 'mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin&directConnection=true' --quiet --eval '\n  rs.initiate({ _id: \"rs0\", members: [\n    { _id: 0, host: \"127.0.0.1:27017\" }, { _id: 1, host: \"127.0.0.1:27018\" }, { _id: 2, host: \"127.0.0.1:27019\" } ] })'\nsleep 10; mongosh 'mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/?authSource=admin' --quiet --eval 'rs.status().members.map(m => m.name + \" \" + m.stateStr)'\n```\n**Lesson:** a replica set is the unit of high availability in MongoDB: members replicate the primary's\n**oplog**, elect a new primary when it fails, and `w: 'majority'` makes a write wait until it can't be rolled\nback. Converting a standalone keeps its data: restart it with a `replSetName`, initiate, and empty members copy\neverything with an initial sync. With access control on, members prove they belong with a keyfile (or x.509),\nand host names in the config must be addresses the members actually listen on.\n",
+   "story": "mongo",
+   "chapter": 3,
+   "narrative": "**Lena:** The big grower's contract says \"no single point of failure\". Right now our whole product is one\n`mongod`. Kofi set up two more servers last week.\n\n**Kofi:** They're running, empty. I tried `rs.initiate()` on the first one and it complained about the hostname,\nso I stopped.\n\n**Lena:** Make it a replica set. The app's new connection string is already in place.\n",
+   "box_minutes": 30
   },
   {
    "slug": "mongo-auth",
@@ -818,6 +1100,62 @@
    "box_minutes": null
   },
   {
+   "slug": "mongo-story-04-arbiter",
+   "engine": "mongo",
+   "title": "The arbiter can't vote for your data",
+   "difficulty": "hard",
+   "minutes": 35,
+   "order": 4,
+   "tags": [
+    "mongodb",
+    "replica set",
+    "arbiter",
+    "write concern",
+    "majority",
+    "keyFile"
+   ],
+   "summary": "Majority writes hang on a PSA replica set. Bring the secondary back, then replace the arbiter so it can't happen again.",
+   "description": "Replica set **`rs0`**: **`node1`** (27017) primary, **`node2`** (27018) secondary, **`node3`** (27019)\n**arbiter**. node2 went down last night and won't start. The ingest app writes readings with\n**`w: 'majority'`** and they time out.\n\n1. Get **node2** running again as a healthy secondary, so majority writes succeed.\n2. Then **replace the arbiter**: node3 becomes a **data-bearing**, voting member with a full copy of the data.\n   No arbiters left.\n3. Make **`w: 'majority'`** the cluster-wide **default write concern**.\n4. The ingest app (it uses the replica set connection string) is saving readings again.\n\nAdmin: `admin` / `Verdant-Admin-2026` (authSource `admin`). Configs: `/etc/mongodb/nodes/nodeN.conf`.\n",
+   "hints": [
+    "Why won't node2 start? `dbctl start node2` and its log (`/var/log/mongodb/node2.log`) say exactly what it doesn't like.",
+    "With an arbiter, a 3-member set has only **two** members that can acknowledge a write. Lose either and a majority of data-bearing members is impossible: `w: 'majority'` writes wait (and the primary's cache fills with history it can't discard).",
+    "An arbiter can't be converted in place: `rs.remove('127.0.0.1:27019')`, stop node3, empty its `dbPath` (`/srv/mongo/node3`), start it again and `rs.add('127.0.0.1:27019')`: it does an initial sync like any new member.",
+    "`db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: 'majority' } })` sets the cluster-wide default; `db.adminCommand({ getDefaultRWConcern: 1 })` shows it."
+   ],
+   "solution": "```bash\ndbctl start node2                                   # \"permissions on /etc/mongodb/keyfile-node2 are too open\"\nchmod 400 /etc/mongodb/keyfile-node2 && dbctl start node2\nA='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017,127.0.0.1:27018/admin?authSource=admin&replicaSet=rs0'\nmongosh \"$A\" --quiet --eval 'rs.remove(\"127.0.0.1:27019\")'\ndbctl stop node3 && rm -rf /srv/mongo/node3/* && dbctl start node3\nmongosh \"$A\" --quiet --eval 'rs.add(\"127.0.0.1:27019\")'\nmongosh \"$A\" --quiet --eval 'db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: \"majority\" } })'\nsleep 15; mongosh \"$A\" --quiet --eval 'rs.status().members.map(m => m.name + \" \" + m.stateStr)'\n```\n**Lesson:** an arbiter votes in elections but holds no data, so in a Primary-Secondary-Arbiter set **one**\ndata-bearing member going down leaves the primary unable to reach a majority of data-bearing members:\n`w: 'majority'` writes block, the majority commit point stops moving and the primary's WiredTiger cache fills\nwith history it must keep. Three data-bearing members (PSS) tolerate one failure with no such cliff. If you must\nrun an arbiter, know that `w: 'majority'` and PSA don't mix. And the keyfile, like an SSH key, must be readable\nonly by its owner: mongod refuses to start otherwise.\n",
+   "story": "mongo",
+   "chapter": 4,
+   "narrative": "**Ana:** Sensor readings stopped saving around midnight. The devices retry, so we've lost nothing *yet*, but\nthe buffers on the greenhouse gateways fill up in a few hours.\n\n**Kofi:** That's the replica set I built before you joined: a primary, a secondary and an arbiter, to save a\nserver. The primary is up! Why would writes fail?\n\n**Lena:** Get writes going, and then fix the design so one server going down can't stop us again.\n",
+   "box_minutes": 35
+  },
+  {
+   "slug": "mongo-story-05-ttl",
+   "engine": "mongo",
+   "title": "The readings that never expire",
+   "difficulty": "medium",
+   "minutes": 25,
+   "order": 5,
+   "tags": [
+    "mongodb",
+    "ttl index",
+    "bson types",
+    "$toDate",
+    "collMod"
+   ],
+   "summary": "There's a TTL index, yet two months of readings pile up. Fix the data types, the index and the ingest job.",
+   "description": "On **`node1`** (port 27017), `verdant.readings` should only hold the **last 30 days**: there's a TTL index on `ts`.\nYet nothing has expired for about two months. An ingest job (`/srv/app/ingest.js`, re-read every ~20 s) keeps\nadding readings.\n\n1. Readings **older than 30 days disappear** (the TTL monitor runs every 5 s on this box), readings from the last\n   30 days stay.\n2. The TTL index on `ts` expires documents after **exactly 30 days** (2592000 s).\n3. Every `ts` is a real **date**: no other types left, and the ingest job writes dates from now on.\n4. Keep the `{ device: 1, ts: -1 }` index the dashboard uses.\n\nAdmin: `admin` / `Verdant-Admin-2026` (authSource `admin`).\n",
+   "hints": [
+    "`db.readings.aggregate([{ $group: { _id: { $type: '$ts' }, n: { $sum: 1 } } }])`: the TTL monitor only deletes documents whose indexed field is a **BSON date** (or an array of dates). Strings are ignored forever.",
+    "`db.readings.getIndexes()`: read the TTL index's `expireAfterSeconds` carefully. `db.runCommand({ collMod: 'readings', index: { keyPattern: { ts: 1 }, expireAfterSeconds: ... } })` changes it in place.",
+    "Fix the ingest job first (`new Date()`, not a string), or it keeps adding strings while you convert. Then convert in place with an update pipeline: `updateMany({ ts: { $type: 'string' } }, [{ $set: { ts: { $toDate: '$ts' } } }])`."
+   ],
+   "solution": "```bash\nU='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017/verdant?authSource=admin'\nsed -i 's/ts: new Date().toISOString()/ts: new Date()/' /srv/app/ingest.js\nmongosh \"$U\" --quiet <<'JS'\ndb.readings.aggregate([{ $group: { _id: { $type: '$ts' }, n: { $sum: 1 } } }])\ndb.runCommand({ collMod: 'readings', index: { keyPattern: { ts: 1 }, expireAfterSeconds: 2592000 } })\ndb.readings.updateMany({ ts: { $type: 'string' } }, [{ $set: { ts: { $toDate: '$ts' } } }])\nJS\nsleep 30; mongosh \"$U\" --quiet --eval 'db.readings.countDocuments({ ts: { $type: \"string\" } })'   # strings the job added meanwhile\n```\n**Lesson:** a TTL index is a background job that deletes documents whose indexed field is a **date** older than\n`expireAfterSeconds`. A document whose field is a string, a number or missing is silently kept forever, so a\nsmall change in how an app serialises timestamps turns retention off without any error. Check field types with\n`$type`, fix producers before data, convert with an update pipeline (`$toDate`), and adjust TTL settings in\nplace with `collMod`. Schema validation (`$jsonSchema` with `bsonType: 'date'`) would have caught the ingest\nchange on day one.\n",
+   "story": "mongo",
+   "chapter": 5,
+   "narrative": "**Ana:** A grower asked why their dashboard still shows readings from September. Our terms say we keep 30 days.\n\n**Kofi:** There's a TTL index on `ts`, I set it up myself! It definitely worked last summer.\n\n**Lena:** Then something changed since last summer. Make old readings expire, keep the last 30 days, and make\nsure new readings expire too.\n",
+   "box_minutes": 30
+  },
+  {
    "slug": "redis-aof-corrupt",
    "engine": "redis",
    "title": "Bad file format reading the append only file",
@@ -841,6 +1179,62 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "redis-story-01-lockdown",
+   "engine": "redis",
+   "title": "Anyone can FLUSHALL",
+   "difficulty": "easy",
+   "minutes": 20,
+   "order": 1,
+   "tags": [
+    "redis",
+    "acl",
+    "security",
+    "protected-mode",
+    "config rewrite"
+   ],
+   "summary": "Quickbite's Redis has no password and listens everywhere. Lock it down with ACL users that survive a restart.",
+   "description": "**`node1`** (port 6379) has Quickbite's data, no authentication, and listens on every interface.\n\n1. Listen on **localhost only** (`127.0.0.1`, optionally `::1`) with **protected mode** on.\n2. The **`default`** user is **disabled**: an unauthenticated client can't run anything.\n3. User **`admin`** / `QB-Admin-2026`: everything.\n4. User **`app`** / `QB-App-2026`: any command on keys (and Pub/Sub channels) matching **`qb:*`** only, and\n   **nothing in the `@dangerous` category** (`FLUSHALL`, `KEYS`, `CONFIG`, `DEBUG`, …).\n5. It all **survives a restart** (the grader restarts node1), and the data stays.\n\n`node1` = `redis-cli -p 6379`. Config: `/etc/redis/nodes/node1.conf`.\n",
+   "hints": [
+    "`ACL SETUSER app on >QB-App-2026 ~qb:* &qb:* +@all -@dangerous`: `>` sets a password, `~` key patterns, `&` channel patterns, `+@`/`-@` command categories. `ACL CAT dangerous` lists what you're taking away.",
+    "Test without logging in as the user: `ACL DRYRUN app FLUSHALL` and `ACL DRYRUN app GET qb:user:1`.",
+    "Disable `default` last (`ACL SETUSER default off`), and from then on connect with `redis-cli --user admin --pass ...` (or `-a`, or `AUTH admin ...` inside).",
+    "ACL and `CONFIG SET` changes live in memory. Without an `aclfile`, `CONFIG REWRITE` writes both the settings and the users into the config file. (`ACL SAVE` only works with an `aclfile`.)"
+   ],
+   "solution": "```bash\nnode1 ACL SETUSER admin on '>QB-Admin-2026' '~*' '&*' '+@all'\nnode1 ACL SETUSER app on '>QB-App-2026' '~qb:*' '&qb:*' '+@all' '-@dangerous'\nnode1 ACL DRYRUN app FLUSHALL                 # \"... no permissions to run the 'flushall' command\"\nnode1 CONFIG SET bind '127.0.0.1 -::1'\nnode1 CONFIG SET protected-mode yes\nnode1 ACL SETUSER default off\nexport REDISCLI_AUTH=QB-Admin-2026\nnode1 --user admin CONFIG REWRITE\ndbctl restart node1 && node1 --user admin ACL LIST\n```\n**Lesson:** Redis trusts whoever can reach its port unless you tell it otherwise. Since Redis 6, **ACL users**\ngive each client exactly what it needs: key patterns (`~`), channel patterns (`&`) and command categories\n(`+@all -@dangerous` keeps `FLUSHALL`, `KEYS`, `CONFIG`, `DEBUG`, `MIGRATE` and friends away from the app).\nDisable `default` (or give it a password) so nothing runs unauthenticated, bind to the interfaces you mean,\nand remember that runtime changes vanish on restart unless you `CONFIG REWRITE` (or `ACL SAVE` with an\n`aclfile`).\n",
+   "story": "redis",
+   "chapter": 1,
+   "narrative": "**Maya:** A security scanner found our Redis answering on every interface, no password. Anyone who reaches it\ncan read every session and `FLUSHALL` the lot.\n\n**Ravi:** It was for the demo! …two years ago.\n\n**Maya:** Give it real users: one admin for us, one for the app that can't do anything dangerous. And make sure\nit's still locked after the next restart.\n",
+   "box_minutes": 25
+  },
+  {
+   "slug": "redis-story-02-persistence",
+   "engine": "redis",
+   "title": "Everyone's cart is empty",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 2,
+   "tags": [
+    "redis",
+    "persistence",
+    "aof",
+    "rdb",
+    "migrate"
+   ],
+   "summary": "A restart wiped Redis. Merge last night's RDB back in without clobbering today's keys, then make it crash-proof.",
+   "description": "**`node1`** (port 6379) restarted this morning with persistence off and came back empty. Since then customers\nhave logged in again and filled some carts.\n\n1. **Restore** everything from last night's backup **`/backups/redis/quickbite-nightly.rdb`** that node1 doesn't\n   have now. Keys that exist on node1 now are **newer: leave them as they are**. Sessions keep their **expiry**.\n2. Make node1 **survive a crash**: the grader writes a key, waits two seconds, `kill -9`s node1 and starts it\n   again. The key and all the data must still be there.\n3. Keep node1 serving while you work: don't restart it with an empty dataset.\n\nUsers: `admin` / `QB-Admin-2026` (`export REDISCLI_AUTH=QB-Admin-2026; node1 --user admin ...`).\nA spare instance, **`node2`** (port 6380, `/srv/redis/node2`), is configured and stopped: yours to use.\n",
+   "hints": [
+    "Don't restore the RDB onto node1 directly: loading it replaces the whole dataset, today's keys included. Load it into node2 instead (copy it to `/srv/redis/node2/dump.rdb`, `dbctl start node2`) and copy over only the keys node1 is missing.",
+    "`MIGRATE 127.0.0.1 6379 <key> 0 5000 COPY AUTH2 admin QB-Admin-2026`, run on node2, sends one key to node1 *with its TTL* and fails with BUSYKEY if node1 already has it. Loop over `node2 --user admin --scan`.",
+    "Turn on the append-only file **at runtime**: `CONFIG SET appendonly yes` writes the current dataset into a new AOF first. Setting `appendonly yes` in the config and restarting does the opposite: Redis starts from the (empty) AOF and ignores everything in memory.",
+    "`CONFIG SET` lives in memory: `CONFIG REWRITE` writes it to `/etc/redis/nodes/node1.conf`, so the next start reads the AOF. `appendfsync everysec` loses at most about a second in a crash."
+   ],
+   "solution": "```bash\nexport REDISCLI_AUTH=QB-Admin-2026\ncp /backups/redis/quickbite-nightly.rdb /srv/redis/node2/dump.rdb\ndbctl start node2\nnode2 --user admin --scan | while read -r k; do\n  [ \"$(node1 --user admin EXISTS \"$k\")\" = 0 ] && node2 --user admin MIGRATE 127.0.0.1 6379 \"$k\" 0 5000 COPY AUTH2 admin QB-Admin-2026\ndone\nnode1 --user admin CONFIG SET appendonly yes          # rewrites the current dataset into the AOF\nnode1 --user admin CONFIG SET appendfsync everysec\nnode1 --user admin CONFIG SET save '3600 1 300 100 60 10000'\nnode1 --user admin CONFIG REWRITE\nnode1 --user admin INFO persistence | grep -E 'aof_enabled|aof_rewrite_in_progress'\ndbctl stop node2\n```\n**Lesson:** Redis keeps everything in memory; persistence is opt-in. **RDB** snapshots are compact and great\nfor backups, but you lose everything since the last one. The **AOF** logs every write (`appendfsync everysec`:\nat most about a second lost in a crash), and since Redis 7 it's a base RDB plus incremental files. Turn AOF on\nat runtime, never by editing the config and restarting an instance whose data only lives in memory. And restore\nselectively when you have to: a side instance plus `MIGRATE ... COPY` brings back what's missing, TTLs included,\nwithout overwriting what's newer.\n",
+   "story": "redis",
+   "chapter": 2,
+   "narrative": "**Jo:** Support is on fire. Everyone got logged out this morning and every cart is empty. People are rebuilding\ntheir lunch orders from scratch and they are *not* happy.\n\n**Ravi:** The VM rebooted for patches. Redis came back empty… I may have turned persistence off last year,\nfor speed. 😬\n\n**Maya:** Jo's nightly backup job saved an RDB last night. Bring back what we lost, but don't overwrite anything\ncustomers have done *since* the reboot. And make sure a crash can never do this again.\n",
+   "box_minutes": 30
   },
   {
    "slug": "redis-oom",
@@ -869,6 +1263,34 @@
    "box_minutes": null
   },
   {
+   "slug": "redis-story-03-replica",
+   "engine": "redis",
+   "title": "NOREPLICAS",
+   "difficulty": "medium",
+   "minutes": 25,
+   "order": 3,
+   "tags": [
+    "redis",
+    "replication",
+    "acl",
+    "min-replicas-to-write",
+    "replica-read-only"
+   ],
+   "summary": "Writes fail with NOREPLICAS. Give node1 the replica it's waiting for, with its own least-privilege user.",
+   "description": "**`node1`** (port 6379) has `min-replicas-to-write 1` and no replica, so every write fails. **`node2`** (port 6380)\nis running, empty, and meant to be that replica.\n\n1. node2 **replicates** node1 and node1 accepts writes again. **Keep** `min-replicas-to-write 1` on node1.\n2. node2 authenticates with a **dedicated ACL user** on node1 that can do replication and **nothing else** (no\n   keys, no other commands).\n3. node2 is **read-only**: nobody can write to it directly.\n4. Everything **survives a restart** of both nodes.\n\nUsers on both nodes: `admin` / `QB-Admin-2026` (`export REDISCLI_AUTH=QB-Admin-2026`, then `node1 --user admin ...`).\nThe app writes as `app` / `QB-App-2026`.\n",
+   "hints": [
+    "`INFO replication` on both nodes shows roles, links and why a link is down; `tail /var/log/redis/node2.log` too.",
+    "A replica needs exactly three commands on its primary: `ACL SETUSER <user> on >password +psync +replconf +ping`. No `~` key patterns at all.",
+    "On node2: `CONFIG SET masteruser <user>`, `CONFIG SET masterauth <password>`, `REPLICAOF 127.0.0.1 6379`. Then look at node2's `replica-read-only`.",
+    "`CONFIG REWRITE` on **both** nodes: node1 for the new user, node2 for `replicaof`, `masteruser`, `masterauth` and `replica-read-only`."
+   ],
+   "solution": "```bash\nexport REDISCLI_AUTH=QB-Admin-2026\nnode1 --user admin CONFIG GET min-replicas-to-write                   # 1: writes need a replica\nnode1 --user admin ACL SETUSER replica on '>QB-Repl-2026' '+psync' '+replconf' '+ping'\nnode1 --user admin CONFIG REWRITE\nnode2 --user admin CONFIG SET masteruser replica\nnode2 --user admin CONFIG SET masterauth QB-Repl-2026\nnode2 --user admin CONFIG SET replica-read-only yes\nnode2 --user admin REPLICAOF 127.0.0.1 6379\nnode2 --user admin CONFIG REWRITE\nnode1 --user admin INFO replication | grep -E 'connected_slaves|slave0'\nnode2 --user admin INFO replication | grep -E 'role|master_link_status'\n```\n**Lesson:** `min-replicas-to-write N` (with `min-replicas-max-lag`) makes the primary refuse writes unless N\nreplicas have acknowledged recently: a real safety net, and an outage if the replica isn't there. A replica\nconnects like any client, so with ACLs it needs a user: `+psync +replconf +ping` is all it takes, no key access.\nKeep replicas `replica-read-only yes`: a write that lands on a replica is silently overwritten (or worse,\ndiverges). And `CONFIG REWRITE` on every node you changed, or the next restart undoes it all.\n",
+   "story": "redis",
+   "chapter": 3,
+   "narrative": "**Jo:** Checkout is failing: `NOREPLICAS Not enough good replicas to write`. Nobody can place an order!\n\n**Ravi:** I added a \"safety\" setting from a blog post last night, ahead of setting up the replica. Then I went\nhome. The replica part didn't happen yet.\n\n**Maya:** Actually I like that setting: if we can't copy a write, I'd rather not take it. So don't remove it.\nGive node1 its replica. Properly: its own user, read-only, survives restarts.\n",
+   "box_minutes": 30
+  },
+  {
    "slug": "redis-bigkey",
    "engine": "redis",
    "title": "Which key ate the RAM?",
@@ -892,15 +1314,164 @@
    "chapter": null,
    "narrative": null,
    "box_minutes": null
+  },
+  {
+   "slug": "redis-story-04-sentinel",
+   "engine": "redis",
+   "title": "Let the robot promote",
+   "difficulty": "hard",
+   "minutes": 35,
+   "order": 4,
+   "tags": [
+    "redis",
+    "sentinel",
+    "failover",
+    "quorum",
+    "acl"
+   ],
+   "summary": "Run three Sentinels so a dead primary is replaced in seconds, and make sure the old one can rejoin afterwards.",
+   "description": "**`node1`** (6379) is the primary; **`node2`** (6380) and **`node3`** (6381) replicate it. The app asks a Sentinel\nfor the master named **`quickbite`** before each write.\n\n1. Run **three Sentinels**, `sentinel1..3` on ports **26379, 26380, 26381** (configs in\n   `/etc/redis/sentinel/sentinelN.conf`, started with `dbctl start sentinelN`), monitoring `node1` as\n   **`quickbite`** with a **quorum of 2**. They must see each other and both replicas.\n2. A dead primary is noticed within **5 seconds** (`down-after-milliseconds`).\n3. The grader then **kills the primary**. Within half a minute a replica must be promoted, the other replica\n   must follow it, and the app must be writing to it.\n4. When the grader **restarts the old primary**, it must come back as a working replica of the new one.\n\nThe nodes have a ready-made ACL user for Sentinel: **`sentinel`** / `QB-Sentinel-2026` (the `default` user is\noff). Replication user: `replica` / `QB-Repl-2026`. Admin: `admin` / `QB-Admin-2026`.\n",
+   "hints": [
+    "A minimal sentinel config: `port`, `daemonize yes`, `pidfile /var/run/redis/sentinelN.pid`, `logfile /var/log/redis/sentinelN.log`, `dir`, `sentinel monitor quickbite 127.0.0.1 6379 2`, `sentinel down-after-milliseconds quickbite 5000`. Sentinel rewrites its own config file, so it must be writable.",
+    "With `default` disabled, Sentinel has to log in to every node: `sentinel auth-user quickbite sentinel` and `sentinel auth-pass quickbite QB-Sentinel-2026`.",
+    "`redis-cli -p 26379 SENTINEL master quickbite` shows `num-slaves`, `num-other-sentinels` and flags. `SENTINEL ckquorum quickbite` says whether a failover could be authorised right now.",
+    "After a failover, Sentinel turns the old primary into a replica of the new one. To replicate it has to authenticate, like any replica. Compare node1's config with node2's: what does a replica need that node1 never had?"
+   ],
+   "solution": "```bash\nexport REDISCLI_AUTH=QB-Admin-2026\n# node1 must be able to replicate once it's demoted\nnode1 --user admin CONFIG SET masteruser replica\nnode1 --user admin CONFIG SET masterauth QB-Repl-2026\nnode1 --user admin CONFIG REWRITE\nfor i in 1 2 3; do\n  mkdir -p /srv/redis/sentinel$i\n  cat > /etc/redis/sentinel/sentinel$i.conf <<CONF\nport $((26378 + i))\nbind 127.0.0.1\ndaemonize yes\npidfile /var/run/redis/sentinel$i.pid\nlogfile /var/log/redis/sentinel$i.log\ndir /srv/redis/sentinel$i\nsentinel monitor quickbite 127.0.0.1 6379 2\nsentinel auth-user quickbite sentinel\nsentinel auth-pass quickbite QB-Sentinel-2026\nsentinel down-after-milliseconds quickbite 5000\nsentinel failover-timeout quickbite 30000\nCONF\n  dbctl start sentinel$i\ndone\nsleep 5; redis-cli -p 26379 SENTINEL ckquorum quickbite\n```\n**Lesson:** Sentinel is three (or more) small processes that agree a primary is down (**quorum**), elect a\nleader among themselves (a **majority** of all Sentinels) and promote the best replica, reconfiguring the others\nand telling clients where the new primary is (`SENTINEL get-master-addr-by-name`). Run an odd number of them on\nseparate failure domains, tune `down-after-milliseconds` to how fast you need to react, and give them an ACL user\non every node. And remember every node can end up as a replica after a failover, including today's primary: it\nneeds `masteruser`/`masterauth` too.\n",
+   "story": "redis",
+   "chapter": 4,
+   "narrative": "**Maya:** Two replicas and still nobody promotes one at 3 a.m. except a sleepy human. We're putting Sentinel in.\nRavi already moved the app to Sentinel discovery: it asks the Sentinels which node is the primary.\n\n**Ravi:** And if no Sentinel answers it falls back to node1. So technically nothing changes until you start them.\n\n**Maya:** I'll believe it when I see it fail over. The grader is going to kill the primary.\n",
+   "box_minutes": 35
+  },
+  {
+   "slug": "redis-story-05-latency",
+   "engine": "redis",
+   "title": "The two-second hiccup",
+   "difficulty": "medium",
+   "minutes": 30,
+   "order": 5,
+   "tags": [
+    "redis",
+    "latency",
+    "slowlog",
+    "keys vs scan",
+    "unlink",
+    "lazyfree"
+   ],
+   "summary": "Every couple of seconds Redis stalls the whole app. Find the commands blocking the single thread and fix the jobs that send them.",
+   "description": "**`node1`** (port 6379) stalls regularly. Two background jobs run against it, as scripts you can edit:\n\n- `/srv/app/session-cleaner.sh` (every 2 s) removes logged-out sessions,\n- `/srv/app/menu-refresh.sh` (every 15 s) rebuilds the big `qb:menu:all` hash.\n\n1. While the grader watches for about 20 seconds, **no command may take longer than 5 ms** (it sets\n   `slowlog-log-slower-than 5000` and resets the slowlog).\n2. **No `KEYS`** command may run at all.\n3. Both jobs **keep doing their job**: sessions with `status closed` disappear within seconds, and the menu is\n   still rebuilt every 15 s (it stamps `_built` in the hash when done).\n\nLogin: `export REDISCLI_AUTH=QB-Admin-2026; node1 --user admin ...`. The scripts are re-read on every run.\n",
+   "hints": [
+    "`node1 --user admin CONFIG SET slowlog-log-slower-than 5000`, wait a bit, `SLOWLOG GET 10`: each entry has the duration in microseconds and the command. `LATENCY DOCTOR` and `CLIENT LIST` (look at `cmd=`) help too.",
+    "`KEYS pattern` walks the entire keyspace in one go, blocking everyone. `SCAN` does the same work in small steps: `redis-cli --scan --pattern 'qb:session:*'` prints every matching key without blocking.",
+    "Deleting a key with hundreds of thousands of fields frees all that memory before `DEL` returns. `UNLINK` returns immediately and frees it in a background thread; `lazyfree-lazy-user-del yes` makes every `DEL` behave like that."
+   ],
+   "solution": "```bash\nexport REDISCLI_AUTH=QB-Admin-2026\nnode1 --user admin CONFIG SET slowlog-log-slower-than 5000; sleep 16\nnode1 --user admin SLOWLOG GET 10            # KEYS qb:session:* (~8 ms) and DEL qb:menu:all (~15 ms)\nsed -i \"s/rc KEYS 'qb:session:\\*'/rc --scan --pattern 'qb:session:*'/\" /srv/app/session-cleaner.sh\nsed -i 's/rc DEL qb:menu:all/rc UNLINK qb:menu:all/' /srv/app/menu-refresh.sh\nnode1 --user admin CONFIG SET lazyfree-lazy-user-del yes     # belt and braces for other DELs\nnode1 --user admin CONFIG REWRITE\n```\n**Lesson:** Redis executes one command at a time, so latency is about the **slowest** command, not the average.\nO(N) commands over big things block everyone: `KEYS` over the whole keyspace, `DEL` (or expiry, or eviction) of\na huge collection, `HGETALL`/`SMEMBERS`/`LRANGE 0 -1` on big keys, long Lua scripts. Use the `SLOWLOG` and\n`LATENCY` tools to find them, iterate with `SCAN`/`HSCAN`/`SSCAN`, free big values with `UNLINK` (or the\n`lazyfree-*` settings), and keep collections from growing without bound.\n",
+   "story": "redis",
+   "chapter": 5,
+   "narrative": "**Jo:** The app's p99 latency graph looks like a comb: a spike every two seconds, and a bigger one every\nfifteen. Customers say the menu \"stutters\".\n\n**Ravi:** Redis can do a hundred thousand ops a second, it can't be Redis. Can it?\n\n**Maya:** Redis runs commands one at a time. One slow command and everyone waits behind it. Find the slow ones.\n",
+   "box_minutes": 30
+  },
+  {
+   "slug": "redis-story-06-cluster",
+   "engine": "redis",
+   "title": "Six nodes, 16384 slots",
+   "difficulty": "hard",
+   "minutes": 40,
+   "order": 6,
+   "tags": [
+    "redis",
+    "cluster",
+    "resharding",
+    "redis-cli --cluster",
+    "migration"
+   ],
+   "summary": "Build a 3-master, 3-replica Redis Cluster and copy every key from the standalone server into it, TTLs and all.",
+   "description": "**`node1`** (port 6379) is the standalone server with all of Quickbite's keys. **`node4`..`node9`** (ports\n**7001-7006**, configs `/etc/redis/nodes/node4.conf`..`node9.conf`) are empty, standalone and running.\n\n1. Turn node4..node9 into **one Redis Cluster**: **3 masters, 3 replicas** (one per master), all 16384 slots\n   covered, `cluster_state:ok`, every replica's link to its master up.\n2. **Copy every key** from node1 into the cluster, with values and **TTLs** intact.\n3. **node1 stays exactly as it is** (same keys): it's the rollback plan.\n4. The `app` user can read and write `qb:*` keys through the cluster.\n\nAll nodes have the same ACL users (`default` is off): `admin` / `QB-Admin-2026`, `app` / `QB-App-2026`,\n`replica` / `QB-Repl-2026`. `dbctl status` lists everything; `redis-cli -c -p 7001` follows cluster redirects.\n",
+   "hints": [
+    "`cluster-enabled yes` (plus `cluster-config-file` and `cluster-node-timeout`) can't be set with `CONFIG SET`: add it to each config and restart the node. Each node needs its own cluster-config-file name if they share a directory.",
+    "`redis-cli --user admin -a QB-Admin-2026 --cluster create 127.0.0.1:7001 ... 127.0.0.1:7006 --cluster-replicas 1 --cluster-yes` assigns slots and replicas. (`REDISCLI_AUTH` works instead of `-a`.)",
+    "Replicas in a cluster replicate like any replica: with `default` off they need `masteruser` and `masterauth`. If `CLUSTER NODES` shows replicas but `INFO replication` says the link is down, that's why.",
+    "`redis-cli --cluster import 127.0.0.1:7001 --cluster-from 127.0.0.1:6379 --cluster-from-user admin --cluster-from-pass ...`. By default import **moves** keys (MIGRATE deletes them from the source). `--cluster-copy` copies."
+   ],
+   "solution": "```bash\nexport REDISCLI_AUTH=QB-Admin-2026\nfor n in 4 5 6 7 8 9; do\n  cat >> /etc/redis/nodes/node$n.conf <<CONF\ncluster-enabled yes\ncluster-config-file nodes-node$n.conf\ncluster-node-timeout 5000\nmasteruser replica\nmasterauth QB-Repl-2026\nCONF\n  dbctl restart node$n\ndone\nredis-cli --user admin --cluster create 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 \\\n  127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006 --cluster-replicas 1 --cluster-yes\nredis-cli --user admin -p 7001 CLUSTER INFO | grep cluster_state        # wait for ok (CLUSTERDOWN otherwise)\nredis-cli --user admin --cluster import 127.0.0.1:7001 --cluster-from 127.0.0.1:6379 \\\n  --cluster-from-user admin --cluster-from-pass QB-Admin-2026 --cluster-copy\nredis-cli --user admin --cluster check 127.0.0.1:7001\n```\n**Lesson:** Redis Cluster splits the keyspace into 16384 **hash slots** spread over the masters; clients hash\neach key (or its `{hash tag}`) to find its node and follow `MOVED` redirects. Multi-key commands only work when\nall keys share a slot, so design keys with hash tags where you need that. Cluster mode is a startup setting,\nreplicas still authenticate like any replica, and `redis-cli --cluster` does the heavy lifting: `create`,\n`check`, `reshard`, `rebalance`, and `import` from a standalone server (with `--cluster-copy` if you want to keep\nthe source as a rollback).\n",
+   "story": "redis",
+   "chapter": 6,
+   "narrative": "**Maya:** We launch in Madrid and Barcelona next month. One Redis won't hold the lunch rush of three cities, so\nwe're moving to Redis Cluster: three primaries, each with a replica.\n\n**Ravi:** I've provisioned six instances on ports 7001 to 7006. They're running, they're just… normal Redis.\n\n**Maya:** Copy everything over, and leave the old server exactly as it is until we've switched the app. That's\nour rollback plan.\n",
+   "box_minutes": 40
   }
  ],
  "stories": [
+  {
+   "id": "postgres",
+   "engine": "postgres",
+   "title": "Parcelpoint",
+   "subtitle": "A PostgreSQL story: from initdb to failover and the vacuum that couldn't",
+   "intro": "**Parcelpoint** delivers parcels across Portugal: a few vans, a lot of tracking numbers, and one PostgreSQL 16\nserver that Tomás set up during a hackathon and nobody has touched since. No backups anyone has tested. No\nreplica. A config file with comments like `# TODO ask someone`.\n\nDana just raised a round and hired a DBA. That's you.\n\nOver the coming weeks you'll build their PostgreSQL setup properly: a clean cluster, a major-version upgrade,\npoint-in-time recovery, streaming replication, a disk that fills up, a dead primary and a vacuum that can't do\nits job. Every chapter is a real box with real PostgreSQL servers: you do the work, the grader checks it.\n",
+   "outro": "Story complete. Parcelpoint's parcels are safe with you.",
+   "cast": [
+    {
+     "name": "Dana",
+     "role": "Head of engineering",
+     "avatar": "🧭"
+    },
+    {
+     "name": "Tomás",
+     "role": "Backend developer",
+     "avatar": "🛠️"
+    },
+    {
+     "name": "Inês",
+     "role": "Ops & on-call",
+     "avatar": "📟"
+    }
+   ],
+   "acts": [
+    {
+     "title": "Act I · Day one",
+     "intro": "Before touching production, Dana wants you to show her what a properly set-up cluster looks like. Then production gets its overdue upgrade.",
+     "chapters": [
+      "pg-story-01-initdb",
+      "pg-story-02-upgrade"
+     ]
+    },
+    {
+     "title": "Act II · Don't lose the data",
+     "intro": "Tomás set up WAL archiving \"just in case\" and never tried a restore. Today is the day.",
+     "chapters": [
+      "pg-story-03-pitr"
+     ]
+    },
+    {
+     "title": "Act III · A second copy",
+     "intro": "One server is one bad disk away from no deliveries. You add a standby, and meet the ways WAL can pile up.",
+     "chapters": [
+      "pg-story-04-standby",
+      "pg-story-05-wal-disk"
+     ]
+    },
+    {
+     "title": "Act IV · When the primary dies",
+     "intro": "3 a.m., node1 goes dark mid-shift. Promote the right standby, re-home the others, and bring the old primary back without a split brain.",
+     "chapters": [
+      "pg-story-06-failover"
+     ]
+    },
+    {
+     "title": "Act V · The long tail",
+     "intro": "Everything works, but the tracking table keeps growing and autovacuum is busy all day. Something is holding the horizon back.",
+     "chapters": [
+      "pg-story-07-horizon"
+     ]
+    }
+   ]
+  },
   {
    "id": "mysql",
    "engine": "mysql",
    "title": "Lumen Books",
    "subtitle": "A MySQL story: from an empty server to zero-downtime migrations",
    "intro": "**Lumen Books** sells used and rare books online. Twelve people, forty thousand customers, and a\ndatabase that Marco installed on his laptop three years ago and copied to a VM \"temporarily\".\n\nBlack Friday is in six weeks. Priya, the CTO, has finally hired a DBA. That's you.\n\nOver the next weeks you'll build their MySQL setup properly: install it, containerise it, back it up,\nreplicate it, survive losing a server, automate failover and change big tables without taking the\nshop down. Every chapter is a real box with real MySQL: you do the work, the grader checks it.\n",
+   "outro": "Story complete. You run Lumen Books' databases now.",
    "cast": [
     {
      "name": "Priya",
@@ -956,6 +1527,113 @@
      "intro": "The catalogue needs a new column. The table has millions of rows and the shop can't stop.",
      "chapters": [
       "mysql-story-09-ghost"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "mongo",
+   "engine": "mongo",
+   "title": "Verdant",
+   "subtitle": "A MongoDB story: from an open port to a healthy replica set",
+   "intro": "**Verdant** makes sensors for commercial greenhouses: temperature, humidity, soil and CO₂, every minute, from\nsix hundred devices across five sites. All of it lands in one MongoDB that Kofi set up from a tutorial, with\nthe tutorial's settings.\n\nLena just signed two big growers and wants the database to stop being the scary part. That's your job.\n\nOver the coming weeks you'll lock it down, recover from a bad `deleteMany`, turn one server into a replica set,\nuntangle an arbiter that stalls every write and make old readings actually expire. Every chapter is a real box\nwith real `mongod`s: you do the work, the grader checks it.\n",
+   "outro": "Story complete. Verdant's greenhouses report to a database you built.",
+   "cast": [
+    {
+     "name": "Lena",
+     "role": "CTO",
+     "avatar": "🧭"
+    },
+    {
+     "name": "Kofi",
+     "role": "Developer",
+     "avatar": "🛠️"
+    },
+    {
+     "name": "Ana",
+     "role": "Customer support",
+     "avatar": "📟"
+    }
+   ],
+   "acts": [
+    {
+     "title": "Act I · Day one",
+     "intro": "The database answers anyone, and someone just deleted the wrong devices. Two fires before lunch.",
+     "chapters": [
+      "mongo-story-01-auth",
+      "mongo-story-02-restore"
+     ]
+    },
+    {
+     "title": "Act II · One is none",
+     "intro": "A single mongod is a single point of failure. You build a replica set, then fix the one Kofi built before you arrived.",
+     "chapters": [
+      "mongo-story-03-replset",
+      "mongo-story-04-arbiter"
+     ]
+    },
+    {
+     "title": "Act III · Keeping it small",
+     "intro": "Readings are supposed to expire after 30 days. The disk says otherwise.",
+     "chapters": [
+      "mongo-story-05-ttl"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "redis",
+   "engine": "redis",
+   "title": "Quickbite",
+   "subtitle": "A Redis story: from an open port to Sentinel, a latency hunt and a cluster",
+   "intro": "**Quickbite** delivers lunch in twenty minutes or less. Sessions, carts, menus, rate limits and the order queue\nall live in one Redis that Ravi started with `redis-server --protected-mode no` \"just for the demo\", two years ago.\n\nThe lunch rush is getting bigger every month and Maya has hired someone who knows Redis. That's you.\n\nOver the coming weeks you'll lock it down, make it survive restarts, add replicas, let Sentinel handle\nfailover, hunt down latency spikes and finally move to Redis Cluster. Every chapter is a real box with real\nRedis: you do the work, the grader checks it.\n",
+   "outro": "Story complete. Quickbite's lunch rush runs on your Redis now.",
+   "cast": [
+    {
+     "name": "Maya",
+     "role": "CTO",
+     "avatar": "🧭"
+    },
+    {
+     "name": "Ravi",
+     "role": "Backend developer",
+     "avatar": "🛠️"
+    },
+    {
+     "name": "Jo",
+     "role": "Support & on-call",
+     "avatar": "📟"
+    }
+   ],
+   "acts": [
+    {
+     "title": "Act I · Day one",
+     "intro": "Ravi's Redis answers anyone who asks, and forgets everything when it restarts. That ends this week.",
+     "chapters": [
+      "redis-story-01-lockdown",
+      "redis-story-02-persistence"
+     ]
+    },
+    {
+     "title": "Act II · More than one",
+     "intro": "One Redis is one crash away from an empty cart for every customer. Replicas first, then a robot to promote them.",
+     "chapters": [
+      "redis-story-03-replica",
+      "redis-story-04-sentinel"
+     ]
+    },
+    {
+     "title": "Act III · Fast, again",
+     "intro": "Every two seconds the whole app freezes for a moment. Find out who's blocking the single thread.",
+     "chapters": [
+      "redis-story-05-latency"
+     ]
+    },
+    {
+     "title": "Act IV · Outgrowing one box",
+     "intro": "Lunch rush in three cities. Time to spread the keyspace over a cluster without losing a cart.",
+     "chapters": [
+      "redis-story-06-cluster"
      ]
     }
    ]

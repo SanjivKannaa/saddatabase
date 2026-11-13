@@ -1,0 +1,9 @@
+
+ sadDatabase · Verdant (MongoDB 7.0)
+ ───────────────────────────────────
+ you     mongodb (OS user, no sudo)
+ nodes   node1 :27017  node2 :27018  node3 :27019
+ client  node1 / node2 / node3   (mongosh --port PORT)
+ server  dbctl start|stop|restart|status [nodeN]
+ config  /etc/mongodb/nodes/nodeN.conf
+ logs    /var/log/mongodb/nodeN.log
