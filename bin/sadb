@@ -8,7 +8,7 @@
 #   sadb publish [slug...] push images to $SADDB_REGISTRY (default ghcr.io/sanjivkannaa) as saddb-<slug>:latest
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-declare -A BASE=([postgres]=pg-base:17 [mysql]=mysql-base:8.4 [mongo]=mongo-base:7.0 [redis]=redis-base:8 [mysql-lab]=mysql-lab-base:8.4 [pg-lab]=pg-lab-base:17 [redis-lab]=redis-lab-base:8)
+declare -A BASE=([postgres]=pg-base:17 [mysql]=mysql-base:8.4 [mongo]=mongo-base:7.0 [redis]=redis-base:8 [mysql-lab]=mysql-lab-base:8.4 [pg-lab]=pg-lab-base:17 [redis-lab]=redis-lab-base:8 [mongo-lab]=mongo-lab-base:7.0)
 cmd=${1:-help}; shift || true
 slugs() { if [ $# -gt 0 ]; then echo "$@"; else ls "$ROOT/scenarios"; fi; }
 engine() { sed -n 's/^engine *= *"\(.*\)"/\1/p' "$ROOT/scenarios/$1/scenario.toml"; }

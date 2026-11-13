@@ -1,0 +1,55 @@
+engine = "redis"
+base = "redis-lab"
+title = "Anyone can FLUSHALL"
+difficulty = "easy"
+minutes = 20
+box_minutes = 25
+order = 1
+tags = ["redis", "acl", "security", "protected-mode", "config rewrite"]
+summary = "Quickbite's Redis has no password and listens everywhere. Lock it down with ACL users that survive a restart."
+narrative = """
+**Maya:** A security scanner found our Redis answering on every interface, no password. Anyone who reaches it
+can read every session and `FLUSHALL` the lot.
+
+**Ravi:** It was for the demo! …two years ago.
+
+**Maya:** Give it real users: one admin for us, one for the app that can't do anything dangerous. And make sure
+it's still locked after the next restart.
+"""
+description = """
+**`node1`** (port 6379) has Quickbite's data, no authentication, and listens on every interface.
+
+1. Listen on **localhost only** (`127.0.0.1`, optionally `::1`) with **protected mode** on.
+2. The **`default`** user is **disabled**: an unauthenticated client can't run anything.
+3. User **`admin`** / `QB-Admin-2026`: everything.
+4. User **`app`** / `QB-App-2026`: any command on keys (and Pub/Sub channels) matching **`qb:*`** only, and
+   **nothing in the `@dangerous` category** (`FLUSHALL`, `KEYS`, `CONFIG`, `DEBUG`, …).
+5. It all **survives a restart** (the grader restarts node1), and the data stays.
+
+`node1` = `redis-cli -p 6379`. Config: `/etc/redis/nodes/node1.conf`.
+"""
+hints = [
+  "`ACL SETUSER app on >QB-App-2026 ~qb:* &qb:* +@all -@dangerous`: `>` sets a password, `~` key patterns, `&` channel patterns, `+@`/`-@` command categories. `ACL CAT dangerous` lists what you're taking away.",
+  "Test without logging in as the user: `ACL DRYRUN app FLUSHALL` and `ACL DRYRUN app GET qb:user:1`.",
+  "Disable `default` last (`ACL SETUSER default off`), and from then on connect with `redis-cli --user admin --pass ...` (or `-a`, or `AUTH admin ...` inside).",
+  "ACL and `CONFIG SET` changes live in memory. Without an `aclfile`, `CONFIG REWRITE` writes both the settings and the users into the config file. (`ACL SAVE` only works with an `aclfile`.)",
+]
+solution = """
+```bash
+node1 ACL SETUSER admin on '>QB-Admin-2026' '~*' '&*' '+@all'
+node1 ACL SETUSER app on '>QB-App-2026' '~qb:*' '&qb:*' '+@all' '-@dangerous'
+node1 ACL DRYRUN app FLUSHALL                 # "... no permissions to run the 'flushall' command"
+node1 CONFIG SET bind '127.0.0.1 -::1'
+node1 CONFIG SET protected-mode yes
+node1 ACL SETUSER default off
+export REDISCLI_AUTH=QB-Admin-2026
+node1 --user admin CONFIG REWRITE
+dbctl restart node1 && node1 --user admin ACL LIST
+```
+**Lesson:** Redis trusts whoever can reach its port unless you tell it otherwise. Since Redis 6, **ACL users**
+give each client exactly what it needs: key patterns (`~`), channel patterns (`&`) and command categories
+(`+@all -@dangerous` keeps `FLUSHALL`, `KEYS`, `CONFIG`, `DEBUG`, `MIGRATE` and friends away from the app).
+Disable `default` (or give it a password) so nothing runs unauthenticated, bind to the interfaces you mean,
+and remember that runtime changes vanish on restart unless you `CONFIG REWRITE` (or `ACL SAVE` with an
+`aclfile`).
+"""

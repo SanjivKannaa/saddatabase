@@ -1,0 +1,60 @@
+engine = "redis"
+base = "redis-lab"
+title = "Everyone's cart is empty"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 2
+tags = ["redis", "persistence", "aof", "rdb", "migrate"]
+summary = "A restart wiped Redis. Merge last night's RDB back in without clobbering today's keys, then make it crash-proof."
+narrative = """
+**Jo:** Support is on fire. Everyone got logged out this morning and every cart is empty. People are rebuilding
+their lunch orders from scratch and they are *not* happy.
+
+**Ravi:** The VM rebooted for patches. Redis came back empty… I may have turned persistence off last year,
+for speed. 😬
+
+**Maya:** Jo's nightly backup job saved an RDB last night. Bring back what we lost, but don't overwrite anything
+customers have done *since* the reboot. And make sure a crash can never do this again.
+"""
+description = """
+**`node1`** (port 6379) restarted this morning with persistence off and came back empty. Since then customers
+have logged in again and filled some carts.
+
+1. **Restore** everything from last night's backup **`/backups/redis/quickbite-nightly.rdb`** that node1 doesn't
+   have now. Keys that exist on node1 now are **newer: leave them as they are**. Sessions keep their **expiry**.
+2. Make node1 **survive a crash**: the grader writes a key, waits two seconds, `kill -9`s node1 and starts it
+   again. The key and all the data must still be there.
+3. Keep node1 serving while you work: don't restart it with an empty dataset.
+
+Users: `admin` / `QB-Admin-2026` (`export REDISCLI_AUTH=QB-Admin-2026; node1 --user admin ...`).
+A spare instance, **`node2`** (port 6380, `/srv/redis/node2`), is configured and stopped: yours to use.
+"""
+hints = [
+  "Don't restore the RDB onto node1 directly: loading it replaces the whole dataset, today's keys included. Load it into node2 instead (copy it to `/srv/redis/node2/dump.rdb`, `dbctl start node2`) and copy over only the keys node1 is missing.",
+  "`MIGRATE 127.0.0.1 6379 <key> 0 5000 COPY AUTH2 admin QB-Admin-2026`, run on node2, sends one key to node1 *with its TTL* and fails with BUSYKEY if node1 already has it. Loop over `node2 --user admin --scan`.",
+  "Turn on the append-only file **at runtime**: `CONFIG SET appendonly yes` writes the current dataset into a new AOF first. Setting `appendonly yes` in the config and restarting does the opposite: Redis starts from the (empty) AOF and ignores everything in memory.",
+  "`CONFIG SET` lives in memory: `CONFIG REWRITE` writes it to `/etc/redis/nodes/node1.conf`, so the next start reads the AOF. `appendfsync everysec` loses at most about a second in a crash.",
+]
+solution = """
+```bash
+export REDISCLI_AUTH=QB-Admin-2026
+cp /backups/redis/quickbite-nightly.rdb /srv/redis/node2/dump.rdb
+dbctl start node2
+node2 --user admin --scan | while read -r k; do
+  [ "$(node1 --user admin EXISTS "$k")" = 0 ] && node2 --user admin MIGRATE 127.0.0.1 6379 "$k" 0 5000 COPY AUTH2 admin QB-Admin-2026
+done
+node1 --user admin CONFIG SET appendonly yes          # rewrites the current dataset into the AOF
+node1 --user admin CONFIG SET appendfsync everysec
+node1 --user admin CONFIG SET save '3600 1 300 100 60 10000'
+node1 --user admin CONFIG REWRITE
+node1 --user admin INFO persistence | grep -E 'aof_enabled|aof_rewrite_in_progress'
+dbctl stop node2
+```
+**Lesson:** Redis keeps everything in memory; persistence is opt-in. **RDB** snapshots are compact and great
+for backups, but you lose everything since the last one. The **AOF** logs every write (`appendfsync everysec`:
+at most about a second lost in a crash), and since Redis 7 it's a base RDB plus incremental files. Turn AOF on
+at runtime, never by editing the config and restarting an instance whose data only lives in memory. And restore
+selectively when you have to: a side instance plus `MIGRATE ... COPY` brings back what's missing, TTLs included,
+without overwriting what's newer.
+"""

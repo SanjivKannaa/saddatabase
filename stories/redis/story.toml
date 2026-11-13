@@ -1,0 +1,40 @@
+id = "redis"
+engine = "redis"
+title = "Quickbite"
+subtitle = "A Redis story: from an open port to Sentinel, a latency hunt and a cluster"
+outro = "Story complete. Quickbite's lunch rush runs on your Redis now."
+cast = [
+  { name = "Maya", role = "CTO", avatar = "🧭" },
+  { name = "Ravi", role = "Backend developer", avatar = "🛠️" },
+  { name = "Jo", role = "Support & on-call", avatar = "📟" },
+]
+intro = """
+**Quickbite** delivers lunch in twenty minutes or less. Sessions, carts, menus, rate limits and the order queue
+all live in one Redis that Ravi started with `redis-server --protected-mode no` "just for the demo", two years ago.
+
+The lunch rush is getting bigger every month and Maya has hired someone who knows Redis. That's you.
+
+Over the coming weeks you'll lock it down, make it survive restarts, add replicas, let Sentinel handle
+failover, hunt down latency spikes and finally move to Redis Cluster. Every chapter is a real box with real
+Redis: you do the work, the grader checks it.
+"""
+
+[[acts]]
+title = "Act I · Day one"
+intro = "Ravi's Redis answers anyone who asks, and forgets everything when it restarts. That ends this week."
+chapters = ["redis-story-01-lockdown", "redis-story-02-persistence"]
+
+[[acts]]
+title = "Act II · More than one"
+intro = "One Redis is one crash away from an empty cart for every customer. Replicas first, then a robot to promote them."
+chapters = ["redis-story-03-replica", "redis-story-04-sentinel"]
+
+[[acts]]
+title = "Act III · Fast, again"
+intro = "Every two seconds the whole app freezes for a moment. Find out who's blocking the single thread."
+chapters = ["redis-story-05-latency"]
+
+[[acts]]
+title = "Act IV · Outgrowing one box"
+intro = "Lunch rush in three cities. Time to spread the keyspace over a cluster without losing a cart."
+chapters = ["redis-story-06-cluster"]

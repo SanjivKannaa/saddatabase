@@ -1,0 +1,9 @@
+
+ sadDatabase · Quickbite (Redis 8)
+ ─────────────────────────────────
+ you     redis (OS user, no sudo)
+ nodes   node1 :6379  node2 :6380  node3 :6381
+ client  node1 / node2 / node3   (redis-cli -p PORT)
+ server  dbctl start|stop|restart|status [nodeN|sentinelN]
+ config  /etc/redis/nodes/nodeN.conf
+ logs    /var/log/redis/

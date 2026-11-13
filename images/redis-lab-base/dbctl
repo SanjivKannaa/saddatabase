@@ -1,0 +1,54 @@
+#!/bin/bash
+# dbctl start|stop|restart|status [nodeN|sentinelN|all]   (default: everything that has a config)
+#   nodeN      /etc/redis/nodes/nodeN.conf         (redis-server)
+#   sentinelN  /etc/redis/sentinel/sentinelN.conf  (redis-sentinel)
+act=${1:-status}; target=${2:-all}
+items() {
+  if [ "$target" = all ]; then
+    { ls /etc/redis/nodes/ /etc/redis/sentinel/ 2>/dev/null | sed -n 's/^\(\(node\|sentinel\)[0-9]*\)\.conf$/\1/p'
+      for f in /etc/sad/*.dead; do [ -f "$f" ] && basename "$f" .dead; done; } | sort -u
+  else echo "${target/#[0-9]/node$target}"; fi
+}
+conf() { case $1 in sentinel*) echo /etc/redis/sentinel/$1.conf ;; *) echo /etc/redis/nodes/$1.conf ;; esac; }
+get() { sed -n "s/^[[:space:]]*$2[[:space:]]\+\"\{0,1\}\([^\" ]*\).*/\1/p" "$(conf $1)" 2>/dev/null | tail -1; }
+pidf() { local p; p=$(get $1 pidfile); echo "${p:-/var/run/redis/$1.pid}"; }
+port() { local p; p=$(get $1 port); case $1 in sentinel*) echo "${p:-26379}" ;; *) echo "${p:-6379}" ;; esac; }
+alive() { [ -s "$(pidf $1)" ] && kill -0 "$(cat "$(pidf $1)")" 2>/dev/null; }
+answers() { redis-cli -p "$(port $1)" ping 2>&1 | grep -qE 'PONG|NOAUTH|WRONGPASS|AUTH|NOPERM'; }
+start() {
+  local n=$1 c; c=$(conf $1)
+  [ -f /etc/sad/$n.dead ] && { echo "$n: $(cat /etc/sad/$n.dead)"; return 1; }
+  [ -f "$c" ] || { echo "$n: no such node (no $c)"; return 1; }
+  alive $n && { echo "$n is already running"; return 0; }
+  local out lf lines=0
+  lf=$(get $n logfile); [ -n "$lf" ] && [ -f "$lf" ] && lines=$(wc -l < "$lf")
+  case $n in sentinel*) out=$(redis-sentinel "$c" 2>&1) ;; *) out=$(redis-server "$c" 2>&1) ;; esac
+  for i in $(seq 120); do
+    # a node that is still loading its dataset answers NOAUTH but can't serve yet: wait for "Ready" in its log
+    if answers $n && { [ -z "$lf" ] || [[ $n == sentinel* ]] || tail -n +$((lines + 1)) "$lf" 2>/dev/null | grep -q 'Ready to accept connections'; }; then
+      echo "$n started (port $(port $n))"; return 0; fi
+    [ $i -gt 6 ] && ! alive $n && break; sleep 0.5
+  done
+  echo "$n failed to start."; [ -n "$out" ] && echo "$out" | tail -4 | sed 's/^/  /'
+  [ -n "$lf" ] && { tail -n 4 "$lf" 2>/dev/null | sed 's/^/  /'; echo "  (log: $lf)"; }
+  return 1
+}
+stop() {
+  local n=$1
+  alive $n || { echo "$n is not running"; return 0; }
+  kill "$(cat "$(pidf $n)")"; for i in $(seq 120); do alive $n || { echo "$n stopped"; return 0; }; sleep 0.5; done; return 1
+}
+status() {
+  local n=$1
+  if alive $n; then echo "$n: running  (127.0.0.1:$(port $n), pid $(cat "$(pidf $n)"))"
+  elif [ -f /etc/sad/$n.dead ]; then echo "$n: DOWN ($(cat /etc/sad/$n.dead))"
+  else echo "$n: stopped"; fi
+}
+rc=0
+[ -n "$(items)" ] || { echo "nothing configured yet (/etc/redis/nodes, /etc/redis/sentinel)"; exit 0; }
+case $act in
+  start|stop|status) for n in $(items); do $act $n || rc=1; done ;;
+  restart) for n in $(items); do stop $n; start $n || rc=1; done ;;
+  *) sed -n '2,4p' "$0"; exit 2 ;;
+esac
+exit $rc

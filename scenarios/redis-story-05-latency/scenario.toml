@@ -1,0 +1,52 @@
+engine = "redis"
+base = "redis-lab"
+title = "The two-second hiccup"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 5
+tags = ["redis", "latency", "slowlog", "keys vs scan", "unlink", "lazyfree"]
+summary = "Every couple of seconds Redis stalls the whole app. Find the commands blocking the single thread and fix the jobs that send them."
+narrative = """
+**Jo:** The app's p99 latency graph looks like a comb: a spike every two seconds, and a bigger one every
+fifteen. Customers say the menu "stutters".
+
+**Ravi:** Redis can do a hundred thousand ops a second, it can't be Redis. Can it?
+
+**Maya:** Redis runs commands one at a time. One slow command and everyone waits behind it. Find the slow ones.
+"""
+description = """
+**`node1`** (port 6379) stalls regularly. Two background jobs run against it, as scripts you can edit:
+
+- `/srv/app/session-cleaner.sh` (every 2 s) removes logged-out sessions,
+- `/srv/app/menu-refresh.sh` (every 15 s) rebuilds the big `qb:menu:all` hash.
+
+1. While the grader watches for about 20 seconds, **no command may take longer than 5 ms** (it sets
+   `slowlog-log-slower-than 5000` and resets the slowlog).
+2. **No `KEYS`** command may run at all.
+3. Both jobs **keep doing their job**: sessions with `status closed` disappear within seconds, and the menu is
+   still rebuilt every 15 s (it stamps `_built` in the hash when done).
+
+Login: `export REDISCLI_AUTH=QB-Admin-2026; node1 --user admin ...`. The scripts are re-read on every run.
+"""
+hints = [
+  "`node1 --user admin CONFIG SET slowlog-log-slower-than 5000`, wait a bit, `SLOWLOG GET 10`: each entry has the duration in microseconds and the command. `LATENCY DOCTOR` and `CLIENT LIST` (look at `cmd=`) help too.",
+  "`KEYS pattern` walks the entire keyspace in one go, blocking everyone. `SCAN` does the same work in small steps: `redis-cli --scan --pattern 'qb:session:*'` prints every matching key without blocking.",
+  "Deleting a key with hundreds of thousands of fields frees all that memory before `DEL` returns. `UNLINK` returns immediately and frees it in a background thread; `lazyfree-lazy-user-del yes` makes every `DEL` behave like that.",
+]
+solution = """
+```bash
+export REDISCLI_AUTH=QB-Admin-2026
+node1 --user admin CONFIG SET slowlog-log-slower-than 5000; sleep 16
+node1 --user admin SLOWLOG GET 10            # KEYS qb:session:* (~8 ms) and DEL qb:menu:all (~15 ms)
+sed -i "s/rc KEYS 'qb:session:\\*'/rc --scan --pattern 'qb:session:*'/" /srv/app/session-cleaner.sh
+sed -i 's/rc DEL qb:menu:all/rc UNLINK qb:menu:all/' /srv/app/menu-refresh.sh
+node1 --user admin CONFIG SET lazyfree-lazy-user-del yes     # belt and braces for other DELs
+node1 --user admin CONFIG REWRITE
+```
+**Lesson:** Redis executes one command at a time, so latency is about the **slowest** command, not the average.
+O(N) commands over big things block everyone: `KEYS` over the whole keyspace, `DEL` (or expiry, or eviction) of
+a huge collection, `HGETALL`/`SMEMBERS`/`LRANGE 0 -1` on big keys, long Lua scripts. Use the `SLOWLOG` and
+`LATENCY` tools to find them, iterate with `SCAN`/`HSCAN`/`SSCAN`, free big values with `UNLINK` (or the
+`lazyfree-*` settings), and keep collections from growing without bound.
+"""

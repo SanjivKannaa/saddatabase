@@ -1,0 +1,57 @@
+engine = "redis"
+base = "redis-lab"
+title = "NOREPLICAS"
+difficulty = "medium"
+minutes = 25
+box_minutes = 30
+order = 3
+tags = ["redis", "replication", "acl", "min-replicas-to-write", "replica-read-only"]
+summary = "Writes fail with NOREPLICAS. Give node1 the replica it's waiting for, with its own least-privilege user."
+narrative = """
+**Jo:** Checkout is failing: `NOREPLICAS Not enough good replicas to write`. Nobody can place an order!
+
+**Ravi:** I added a "safety" setting from a blog post last night, ahead of setting up the replica. Then I went
+home. The replica part didn't happen yet.
+
+**Maya:** Actually I like that setting: if we can't copy a write, I'd rather not take it. So don't remove it.
+Give node1 its replica. Properly: its own user, read-only, survives restarts.
+"""
+description = """
+**`node1`** (port 6379) has `min-replicas-to-write 1` and no replica, so every write fails. **`node2`** (port 6380)
+is running, empty, and meant to be that replica.
+
+1. node2 **replicates** node1 and node1 accepts writes again. **Keep** `min-replicas-to-write 1` on node1.
+2. node2 authenticates with a **dedicated ACL user** on node1 that can do replication and **nothing else** (no
+   keys, no other commands).
+3. node2 is **read-only**: nobody can write to it directly.
+4. Everything **survives a restart** of both nodes.
+
+Users on both nodes: `admin` / `QB-Admin-2026` (`export REDISCLI_AUTH=QB-Admin-2026`, then `node1 --user admin ...`).
+The app writes as `app` / `QB-App-2026`.
+"""
+hints = [
+  "`INFO replication` on both nodes shows roles, links and why a link is down; `tail /var/log/redis/node2.log` too.",
+  "A replica needs exactly three commands on its primary: `ACL SETUSER <user> on >password +psync +replconf +ping`. No `~` key patterns at all.",
+  "On node2: `CONFIG SET masteruser <user>`, `CONFIG SET masterauth <password>`, `REPLICAOF 127.0.0.1 6379`. Then look at node2's `replica-read-only`.",
+  "`CONFIG REWRITE` on **both** nodes: node1 for the new user, node2 for `replicaof`, `masteruser`, `masterauth` and `replica-read-only`.",
+]
+solution = """
+```bash
+export REDISCLI_AUTH=QB-Admin-2026
+node1 --user admin CONFIG GET min-replicas-to-write                   # 1: writes need a replica
+node1 --user admin ACL SETUSER replica on '>QB-Repl-2026' '+psync' '+replconf' '+ping'
+node1 --user admin CONFIG REWRITE
+node2 --user admin CONFIG SET masteruser replica
+node2 --user admin CONFIG SET masterauth QB-Repl-2026
+node2 --user admin CONFIG SET replica-read-only yes
+node2 --user admin REPLICAOF 127.0.0.1 6379
+node2 --user admin CONFIG REWRITE
+node1 --user admin INFO replication | grep -E 'connected_slaves|slave0'
+node2 --user admin INFO replication | grep -E 'role|master_link_status'
+```
+**Lesson:** `min-replicas-to-write N` (with `min-replicas-max-lag`) makes the primary refuse writes unless N
+replicas have acknowledged recently: a real safety net, and an outage if the replica isn't there. A replica
+connects like any client, so with ACLs it needs a user: `+psync +replconf +ping` is all it takes, no key access.
+Keep replicas `replica-read-only yes`: a write that lands on a replica is silently overwritten (or worse,
+diverges). And `CONFIG REWRITE` on every node you changed, or the next restart undoes it all.
+"""

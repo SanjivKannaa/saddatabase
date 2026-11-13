@@ -1,0 +1,71 @@
+engine = "redis"
+base = "redis-lab"
+title = "Let the robot promote"
+difficulty = "hard"
+minutes = 35
+box_minutes = 35
+order = 4
+tags = ["redis", "sentinel", "failover", "quorum", "acl"]
+summary = "Run three Sentinels so a dead primary is replaced in seconds, and make sure the old one can rejoin afterwards."
+narrative = """
+**Maya:** Two replicas and still nobody promotes one at 3 a.m. except a sleepy human. We're putting Sentinel in.
+Ravi already moved the app to Sentinel discovery: it asks the Sentinels which node is the primary.
+
+**Ravi:** And if no Sentinel answers it falls back to node1. So technically nothing changes until you start them.
+
+**Maya:** I'll believe it when I see it fail over. The grader is going to kill the primary.
+"""
+description = """
+**`node1`** (6379) is the primary; **`node2`** (6380) and **`node3`** (6381) replicate it. The app asks a Sentinel
+for the master named **`quickbite`** before each write.
+
+1. Run **three Sentinels**, `sentinel1..3` on ports **26379, 26380, 26381** (configs in
+   `/etc/redis/sentinel/sentinelN.conf`, started with `dbctl start sentinelN`), monitoring `node1` as
+   **`quickbite`** with a **quorum of 2**. They must see each other and both replicas.
+2. A dead primary is noticed within **5 seconds** (`down-after-milliseconds`).
+3. The grader then **kills the primary**. Within half a minute a replica must be promoted, the other replica
+   must follow it, and the app must be writing to it.
+4. When the grader **restarts the old primary**, it must come back as a working replica of the new one.
+
+The nodes have a ready-made ACL user for Sentinel: **`sentinel`** / `QB-Sentinel-2026` (the `default` user is
+off). Replication user: `replica` / `QB-Repl-2026`. Admin: `admin` / `QB-Admin-2026`.
+"""
+hints = [
+  "A minimal sentinel config: `port`, `daemonize yes`, `pidfile /var/run/redis/sentinelN.pid`, `logfile /var/log/redis/sentinelN.log`, `dir`, `sentinel monitor quickbite 127.0.0.1 6379 2`, `sentinel down-after-milliseconds quickbite 5000`. Sentinel rewrites its own config file, so it must be writable.",
+  "With `default` disabled, Sentinel has to log in to every node: `sentinel auth-user quickbite sentinel` and `sentinel auth-pass quickbite QB-Sentinel-2026`.",
+  "`redis-cli -p 26379 SENTINEL master quickbite` shows `num-slaves`, `num-other-sentinels` and flags. `SENTINEL ckquorum quickbite` says whether a failover could be authorised right now.",
+  "After a failover, Sentinel turns the old primary into a replica of the new one. To replicate it has to authenticate, like any replica. Compare node1's config with node2's: what does a replica need that node1 never had?",
+]
+solution = """
+```bash
+export REDISCLI_AUTH=QB-Admin-2026
+# node1 must be able to replicate once it's demoted
+node1 --user admin CONFIG SET masteruser replica
+node1 --user admin CONFIG SET masterauth QB-Repl-2026
+node1 --user admin CONFIG REWRITE
+for i in 1 2 3; do
+  mkdir -p /srv/redis/sentinel$i
+  cat > /etc/redis/sentinel/sentinel$i.conf <<CONF
+port $((26378 + i))
+bind 127.0.0.1
+daemonize yes
+pidfile /var/run/redis/sentinel$i.pid
+logfile /var/log/redis/sentinel$i.log
+dir /srv/redis/sentinel$i
+sentinel monitor quickbite 127.0.0.1 6379 2
+sentinel auth-user quickbite sentinel
+sentinel auth-pass quickbite QB-Sentinel-2026
+sentinel down-after-milliseconds quickbite 5000
+sentinel failover-timeout quickbite 30000
+CONF
+  dbctl start sentinel$i
+done
+sleep 5; redis-cli -p 26379 SENTINEL ckquorum quickbite
+```
+**Lesson:** Sentinel is three (or more) small processes that agree a primary is down (**quorum**), elect a
+leader among themselves (a **majority** of all Sentinels) and promote the best replica, reconfiguring the others
+and telling clients where the new primary is (`SENTINEL get-master-addr-by-name`). Run an odd number of them on
+separate failure domains, tune `down-after-milliseconds` to how fast you need to react, and give them an ACL user
+on every node. And remember every node can end up as a replica after a failover, including today's primary: it
+needs `masteruser`/`masterauth` too.
+"""

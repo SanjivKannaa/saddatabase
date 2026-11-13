@@ -1,0 +1,64 @@
+engine = "redis"
+base = "redis-lab"
+title = "Six nodes, 16384 slots"
+difficulty = "hard"
+minutes = 40
+box_minutes = 40
+order = 6
+tags = ["redis", "cluster", "resharding", "redis-cli --cluster", "migration"]
+summary = "Build a 3-master, 3-replica Redis Cluster and copy every key from the standalone server into it, TTLs and all."
+narrative = """
+**Maya:** We launch in Madrid and Barcelona next month. One Redis won't hold the lunch rush of three cities, so
+we're moving to Redis Cluster: three primaries, each with a replica.
+
+**Ravi:** I've provisioned six instances on ports 7001 to 7006. They're running, they're just… normal Redis.
+
+**Maya:** Copy everything over, and leave the old server exactly as it is until we've switched the app. That's
+our rollback plan.
+"""
+description = """
+**`node1`** (port 6379) is the standalone server with all of Quickbite's keys. **`node4`..`node9`** (ports
+**7001-7006**, configs `/etc/redis/nodes/node4.conf`..`node9.conf`) are empty, standalone and running.
+
+1. Turn node4..node9 into **one Redis Cluster**: **3 masters, 3 replicas** (one per master), all 16384 slots
+   covered, `cluster_state:ok`, every replica's link to its master up.
+2. **Copy every key** from node1 into the cluster, with values and **TTLs** intact.
+3. **node1 stays exactly as it is** (same keys): it's the rollback plan.
+4. The `app` user can read and write `qb:*` keys through the cluster.
+
+All nodes have the same ACL users (`default` is off): `admin` / `QB-Admin-2026`, `app` / `QB-App-2026`,
+`replica` / `QB-Repl-2026`. `dbctl status` lists everything; `redis-cli -c -p 7001` follows cluster redirects.
+"""
+hints = [
+  "`cluster-enabled yes` (plus `cluster-config-file` and `cluster-node-timeout`) can't be set with `CONFIG SET`: add it to each config and restart the node. Each node needs its own cluster-config-file name if they share a directory.",
+  "`redis-cli --user admin -a QB-Admin-2026 --cluster create 127.0.0.1:7001 ... 127.0.0.1:7006 --cluster-replicas 1 --cluster-yes` assigns slots and replicas. (`REDISCLI_AUTH` works instead of `-a`.)",
+  "Replicas in a cluster replicate like any replica: with `default` off they need `masteruser` and `masterauth`. If `CLUSTER NODES` shows replicas but `INFO replication` says the link is down, that's why.",
+  "`redis-cli --cluster import 127.0.0.1:7001 --cluster-from 127.0.0.1:6379 --cluster-from-user admin --cluster-from-pass ...`. By default import **moves** keys (MIGRATE deletes them from the source). `--cluster-copy` copies.",
+]
+solution = """
+```bash
+export REDISCLI_AUTH=QB-Admin-2026
+for n in 4 5 6 7 8 9; do
+  cat >> /etc/redis/nodes/node$n.conf <<CONF
+cluster-enabled yes
+cluster-config-file nodes-node$n.conf
+cluster-node-timeout 5000
+masteruser replica
+masterauth QB-Repl-2026
+CONF
+  dbctl restart node$n
+done
+redis-cli --user admin --cluster create 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 \\
+  127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006 --cluster-replicas 1 --cluster-yes
+redis-cli --user admin -p 7001 CLUSTER INFO | grep cluster_state        # wait for ok (CLUSTERDOWN otherwise)
+redis-cli --user admin --cluster import 127.0.0.1:7001 --cluster-from 127.0.0.1:6379 \\
+  --cluster-from-user admin --cluster-from-pass QB-Admin-2026 --cluster-copy
+redis-cli --user admin --cluster check 127.0.0.1:7001
+```
+**Lesson:** Redis Cluster splits the keyspace into 16384 **hash slots** spread over the masters; clients hash
+each key (or its `{hash tag}`) to find its node and follow `MOVED` redirects. Multi-key commands only work when
+all keys share a slot, so design keys with hash tags where you need that. Cluster mode is a startup setting,
+replicas still authenticate like any replica, and `redis-cli --cluster` does the heavy lifting: `create`,
+`check`, `reshard`, `rebalance`, and `import` from a standalone server (with `--cluster-copy` if you want to keep
+the source as a rollback).
+"""
