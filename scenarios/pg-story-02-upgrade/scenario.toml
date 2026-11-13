@@ -1,0 +1,61 @@
+engine = "postgres"
+base = "pg-lab"
+title = "Off the hackathon server"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 2
+tags = ["postgres", "pg_upgrade", "major upgrade", "extensions", "statistics"]
+summary = "Upgrade production from PostgreSQL 16 to 17 with pg_upgrade, without losing data, extensions or plans."
+narrative = """
+**Dana:** Production is still on 16, on the cluster Tomás made at a hackathon. Tonight is our maintenance
+window: the shop's in read-only mode from 23:00 to 01:00. Get it onto 17.
+
+**Tomás:** Can't we just dump and restore? It's only a few gigs.
+
+**Dana:** Today it is. Learn `pg_upgrade` now, while it's small.
+"""
+description = """
+**`node1`** (`/srv/pg/node1`, port 5432) runs **PostgreSQL 16** with the `parcels` database. The app is stopped
+for the maintenance window. Upgrade it to **PostgreSQL 17** with `pg_upgrade`:
+
+1. When you're done, **PostgreSQL 17** answers on **port 5432** with all of `parcels`: every row, the
+   `pg_trgm` search index and the `pg_stat_statements` view working.
+2. The old 16 server stays **stopped**.
+3. `parcels_app` logs in over TCP with its **existing password**. No `trust` in the new `pg_hba.conf`.
+4. The planner has **statistics** for the upgraded tables (PostgreSQL 17's `pg_upgrade` doesn't carry them).
+
+Put the new cluster in `/srv/pg/node2` (`dbctl` manages every `/srv/pg/nodeN`). Binaries:
+`/usr/lib/postgresql/16/bin` and `/usr/lib/postgresql/17/bin` (17 is first in your `PATH`).
+The grader restarts the new server.
+"""
+hints = [
+  "Run `pg_upgrade ... --check` first: it tells you what doesn't match without changing anything. Both servers must be stopped. Run it from a directory you can write to (`cd ~`).",
+  "The new cluster must be initialised compatibly with the old one, notably the same **data checksums** setting (`pg_upgrade` won't switch them on or off for you). Ask the old one: `node1 -c 'SHOW data_checksums'` (before you stop it).",
+  "`pg_upgrade` copies data, not configuration. Compare `/srv/pg/node1/postgresql.conf` with the new one: the port, `listen_addresses` and the libraries the old server preloads.",
+  "After the upgrade, `vacuumdb --all --analyze-in-stages` gives the planner rough statistics fast, then better ones. `pg_upgrade` even prints that command.",
+]
+solution = """
+```bash
+node1 -c 'SHOW data_checksums' -c 'SHOW shared_preload_libraries'   # on, pg_stat_statements
+initdb -D /srv/pg/node2 --data-checksums -E UTF8 --locale=C --auth-local=peer --auth-host=scram-sha-256
+cat >> /srv/pg/node2/postgresql.conf <<'CONF'
+port = 5432
+listen_addresses = 'localhost'
+shared_preload_libraries = 'pg_stat_statements'
+CONF
+dbctl stop node1
+cd ~
+pg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link --check
+pg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link
+dbctl start node2
+vacuumdb --all --analyze-in-stages
+```
+**Lesson:** `pg_upgrade` rewrites the system catalogs for the new version and reuses the data files (`--link`
+hard-links them: minutes instead of hours, but the old cluster is unusable once the new one starts). The new
+cluster must match the old one's checksum setting, so check it before `initdb` (since 16, `pg_upgrade` copies
+the old encoding and locale for you). It
+doesn't bring `postgresql.conf` or `pg_hba.conf` along, so carry over anything that matters (here
+`shared_preload_libraries`). And until PostgreSQL 18, it doesn't bring planner statistics either: analyze
+right away, or the first hour after the upgrade is full of terrible plans.
+"""

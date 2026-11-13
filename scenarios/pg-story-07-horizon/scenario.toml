@@ -1,0 +1,62 @@
+engine = "postgres"
+base = "pg-lab"
+title = "Vacuum can't keep up"
+difficulty = "hard"
+minutes = 30
+box_minutes = 30
+order = 7
+tags = ["postgres", "vacuum", "xmin horizon", "prepared transactions", "idle in transaction"]
+summary = "Autovacuum runs all day and removes nothing. Find what's holding the xmin horizon back, release it, and keep it from coming back."
+narrative = """
+**Inês:** `tracking_events` has a few hundred thousand live rows, and the dashboard says almost as many **dead** ones.
+Autovacuum runs on it every few seconds and finishes having removed… nothing.
+
+**Tomás:** Could it be the reporting tool? It keeps a connection open all day. Oh, and back in March I tried
+two-phase commit for the billing migration. Pretty sure I cleaned that up.
+
+**Dana:** Make vacuum work again, and make sure neither of those can quietly do this to us next time.
+"""
+description = """
+On **`node1`** (port 5432), autovacuum keeps visiting `parcels.tracking_events` but can't remove its dead rows:
+something holds back the **xmin horizon**.
+
+1. Find **everything** that holds the horizon back and release it, so that a plain `VACUUM tracking_events`
+   leaves (almost) no dead rows behind. The grader runs that VACUUM.
+2. The **reporting** login (`reporting`) keeps working, but an idle-in-transaction reporting session must be cut
+   off automatically within **an hour** at most (`idle_in_transaction_session_timeout`, for that role or wider).
+3. Parcelpoint doesn't use two-phase commit: **disable prepared transactions** (`max_prepared_transactions = 0`).
+4. node1 keeps running.
+
+Start with `pg_stat_activity` (`backend_xmin`, `state`, `xact_start`), `pg_prepared_xacts`, `pg_replication_slots`,
+and `VACUUM (VERBOSE) tracking_events`, which tells you *why* it couldn't remove rows.
+"""
+hints = [
+  "`VACUUM (VERBOSE) tracking_events` prints `removable cutoff: N, which was M XIDs old when operation ended` and how many dead rows are `not yet removable`. Something has a snapshot or a transaction ID from long ago.",
+  "`SELECT pid, usename, state, xact_start, backend_xmin FROM pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY age(backend_xmin) DESC;` A session sitting `idle in transaction` in REPEATABLE READ keeps its snapshot (and the horizon) for as long as it stays open. `pg_terminate_backend(pid)`.",
+  "A prepared transaction survives disconnects *and restarts*, and holds the horizon like any open transaction: `SELECT * FROM pg_prepared_xacts;`, then `ROLLBACK PREPARED 'gid'` (or `COMMIT PREPARED`).",
+  "`ALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min'` applies to its new sessions. `max_prepared_transactions` needs a restart, and the server refuses to start with 0 while a prepared transaction still exists.",
+]
+solution = """
+```bash
+node1 -d parcels -c 'VACUUM (VERBOSE) tracking_events' 2>&1 | grep -E 'removable|dead'
+node1 -c "select pid, usename, state, xact_start, age(backend_xmin) from pg_stat_activity where backend_xmin is not null"
+node1 -c 'select gid, prepared, owner, database from pg_prepared_xacts'
+node1 <<'SQL'
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'reporting' AND state LIKE 'idle in transaction%';
+\\c parcels
+ROLLBACK PREPARED 'billing_migration_step3';
+ALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min';
+ALTER SYSTEM SET max_prepared_transactions = 0;
+SQL
+dbctl restart node1
+node1 -d parcels -c 'VACUUM (VERBOSE) tracking_events' 2>&1 | grep -E 'removable|dead'
+```
+**Lesson:** VACUUM can only remove a row version that **no transaction could still see**. The oldest snapshot
+or transaction ID anywhere in the cluster sets that limit, the *xmin horizon*: a long-running query, a session
+left `idle in transaction`, a **forgotten prepared transaction** (it survives restarts), a replication slot's
+`xmin`, or a standby with `hot_standby_feedback`. While it's held, autovacuum runs and achieves nothing, tables
+bloat and, in the worst case, you head for transaction ID wraparound. Monitor `age(backend_xmin)` and
+`pg_prepared_xacts`, cap idle transactions with `idle_in_transaction_session_timeout`, and keep
+`max_prepared_transactions = 0` unless you really run two-phase commit. (The space already lost to bloat comes
+back with `VACUUM FULL`, which locks the table, or online with `pg_repack`.)
+"""

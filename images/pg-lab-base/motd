@@ -1,0 +1,9 @@
+
+ sadDatabase · Parcelpoint (PostgreSQL 17)
+ ─────────────────────────────────────────
+ you     postgres (OS user, no sudo)
+ nodes   node1 :5432  node2 :5433  node3 :5434
+ client  node1 / node2 / node3   (superuser psql)
+ server  dbctl start|stop|restart|status [nodeN]
+ data    /srv/pg/nodeN  (postgresql.conf, pg_hba.conf)
+ logs    /var/log/postgresql/nodeN.log

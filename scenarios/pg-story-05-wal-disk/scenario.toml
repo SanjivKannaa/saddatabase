@@ -1,0 +1,55 @@
+engine = "postgres"
+base = "pg-lab"
+title = "pg_wal is eating the disk"
+difficulty = "medium"
+minutes = 25
+box_minutes = 30
+order = 5
+tags = ["postgres", "wal", "replication slots", "archive_command", "max_slot_wal_keep_size"]
+summary = "pg_wal keeps growing on the primary. Find everything that pins WAL, fix it, and cap it for next time."
+narrative = """
+**Inês:** Disk alert on node1: `pg_wal` is almost 300 MB and climbing; it was 40 MB last month.
+It only ever goes up.
+
+**Tomás:** We tried a node3 standby a while back, it didn't work out, so I deleted its data directory. Oh, and I
+moved the archive folder when I tidied up `/srv`. Probably unrelated?
+
+**Dana:** Find out why WAL isn't being recycled and fix it. **Don't break node2**: it's our only standby.
+"""
+description = """
+On **`node1`** (port 5432, primary) the `pg_wal` directory keeps growing. **`node2`** (port 5433) is a healthy
+streaming standby that must stay that way.
+
+1. Find **every** reason node1 keeps old WAL and remove it, so a checkpoint brings `pg_wal` back down (the
+   grader runs `CHECKPOINT` and expects it under **200 MB**).
+2. **WAL archiving** to `/srv/wal_archive` must work again (the grader switches WAL and watches it get archived).
+3. Set a **cap** so a forgotten slot can never fill the disk again (`max_slot_wal_keep_size`).
+4. **node2** keeps streaming from node1 through its slot.
+
+Useful views: `pg_replication_slots`, `pg_stat_archiver`, `pg_ls_waldir()`, and node1's log.
+"""
+hints = [
+  "`SELECT slot_name, active, restart_lsn, pg_size_pretty(pg_current_wal_lsn() - restart_lsn) FROM pg_replication_slots;` A slot nobody consumes keeps every WAL segment since its `restart_lsn`, forever.",
+  "`SELECT * FROM pg_stat_archiver;` and `tail /var/log/postgresql/node1.log`. Segments waiting to be archived (`pg_wal/archive_status/*.ready`) are never removed either.",
+  "`pg_drop_replication_slot('...')` for the dead standby's slot (not node2's). Fix `archive_command` with `ALTER SYSTEM SET archive_command = '...'` and `SELECT pg_reload_conf()`: no restart needed.",
+  "`ALTER SYSTEM SET max_slot_wal_keep_size = '1GB'`: a slot that falls further behind than that gets invalidated instead of filling the disk.",
+]
+solution = """
+```bash
+node1 -c 'select slot_name, active, pg_size_pretty(pg_current_wal_lsn() - restart_lsn) from pg_replication_slots'
+node1 -c 'select failed_count, last_failed_wal, last_archived_wal from pg_stat_archiver'
+grep -m3 'archive command failed' /var/log/postgresql/node1.log      # cp: ... /srv/wal-archive/...: No such file or directory
+node1 <<'SQL'
+SELECT pg_drop_replication_slot('node3');
+ALTER SYSTEM SET archive_command = 'test ! -f /srv/wal_archive/%f && cp %p /srv/wal_archive/%f';
+ALTER SYSTEM SET max_slot_wal_keep_size = '1GB';
+SELECT pg_reload_conf();
+SQL
+sleep 5; node1 -c 'CHECKPOINT' -c "select pg_size_pretty(sum(size)) from pg_ls_waldir()"
+```
+**Lesson:** the primary removes a WAL segment only when **nobody needs it any more**: not a replication slot
+(every slot, even one whose standby was deleted years ago), not the archiver (a failing `archive_command` keeps
+every segment as `.ready` and retries forever), and not `wal_keep_size`. Monitor all three:
+`pg_replication_slots` for inactive slots and their retained bytes, `pg_stat_archiver` for failures. And set
+`max_slot_wal_keep_size`: losing a dead standby's slot is much better than losing the primary to a full disk.
+"""

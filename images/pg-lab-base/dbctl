@@ -1,0 +1,38 @@
+#!/bin/bash
+# dbctl start|stop|restart|status [node1|node2|node3|all]   (default: every node that has a data directory)
+# Node N: data dir /srv/pg/nodeN (postgresql.conf, pg_hba.conf inside), log /var/log/postgresql/nodeN.log.
+# The binaries follow the cluster's PG_VERSION (16 or 17).
+act=${1:-status}; target=${2:-all}
+nodes() { if [ "$target" = all ]; then { for d in /srv/pg/node*; do [ -f "$d/PG_VERSION" ] && basename "$d"; done; for f in /etc/sad/node*.dead; do [ -f "$f" ] && basename "$f" .dead; done; } | sort -u; else echo "${target/#[0-9]/node$target}"; fi; }
+bin() { echo "/usr/lib/postgresql/$(cat /srv/pg/$1/PG_VERSION 2>/dev/null)/bin"; }
+port() { "$(bin $1)/postgres" -D /srv/pg/$1 -C port 2>/dev/null; }
+alive() { "$(bin $1)/pg_ctl" -D /srv/pg/$1 status >/dev/null 2>&1; }
+role() { psql -X -At -p "$(port $1)" -d postgres -c "select case when pg_is_in_recovery() then 'standby' else 'primary' end" 2>/dev/null; }
+start() {
+  local n=$1 d=/srv/pg/$1
+  [ -f /etc/sad/$n.dead ] && { echo "$n: $(cat /etc/sad/$n.dead)"; return 1; }
+  [ -f "$d/PG_VERSION" ] || { echo "$n: no cluster in $d"; return 1; }
+  alive $n && { echo "$n is already running"; return 0; }
+  if "$(bin $n)/pg_ctl" -D "$d" -l /var/log/postgresql/$n.log -w -t 90 start >/dev/null 2>&1; then
+    echo "$n started (PostgreSQL $(cat $d/PG_VERSION), port $(port $n), $(role $n))"; return 0; fi
+  echo "$n failed to start. Last log lines (/var/log/postgresql/$n.log):"; tail -n 6 /var/log/postgresql/$n.log | sed 's/^/  /'; return 1
+}
+stop() {
+  local n=$1
+  alive $n || { echo "$n is not running"; return 0; }
+  "$(bin $n)/pg_ctl" -D /srv/pg/$n -m fast -w -t 90 stop >/dev/null && echo "$n stopped"
+}
+status() {
+  local n=$1
+  if alive $n; then echo "$n: running  (PostgreSQL $(cat /srv/pg/$n/PG_VERSION), 127.0.0.1:$(port $n), $(role $n))"
+  elif [ -f /etc/sad/$n.dead ]; then echo "$n: DOWN ($(cat /etc/sad/$n.dead))"
+  else echo "$n: stopped"; fi
+}
+rc=0
+[ -n "$(nodes)" ] || { echo "no clusters under /srv/pg yet"; exit 0; }
+case $act in
+  start|stop|status) for n in $(nodes); do $act $n || rc=1; done ;;
+  restart) for n in $(nodes); do stop $n; start $n || rc=1; done ;;
+  *) sed -n '2,4p' "$0"; exit 2 ;;
+esac
+exit $rc

@@ -1,0 +1,61 @@
+engine = "postgres"
+base = "pg-lab"
+title = "A cluster of your own"
+difficulty = "easy"
+minutes = 20
+box_minutes = 25
+order = 1
+tags = ["postgres", "initdb", "pg_hba.conf", "roles", "schemas"]
+summary = "Build Parcelpoint's new cluster from nothing: initdb, sane auth, an owner role and an app role."
+narrative = """
+**Dana:** Before you touch the old server, show me what *right* looks like. Here's an empty box. I want a cluster
+I'd be happy to put customer data on: checksums, no `trust` anywhere, a database the app doesn't own, and an app
+login that can create its own tables and nothing more.
+
+**Tomás:** Last time I just ran `initdb` and it worked fine? 🙂
+
+**Dana:** That's what worries me.
+"""
+description = """
+The box has PostgreSQL 17 installed and **no cluster**. Build one to the spec in `~/README.md`:
+
+1. A cluster in **`/srv/pg/node1`** on **port 5432**, with **data checksums** on, listening on **localhost only**,
+   `shared_buffers = 256MB`. Keep the Unix socket in `/var/run/postgresql` (the default).
+2. **No `trust`** (and no clear-text `password`) lines in `pg_hba.conf`. Local socket logins for `postgres` stay possible.
+3. Database **`parcels`** (UTF8), owned by a **non-login** role **`parcels_owner`**.
+4. Login role **`parcels_app`** (password `Parcel-App-2026`, SCRAM) that can connect to `parcels` over
+   TCP (`127.0.0.1`) and **create tables in schema `app`**. It is not a superuser and doesn't own the database.
+
+Run the server with `dbctl start node1`. The grader restarts it, so settings must be in the config, not just `SET`.
+"""
+hints = [
+  "`initdb --help`: look at `--data-checksums`, `--auth-local` and `--auth-host`. Without them initdb configures `trust` for every local connection (it even warns you).",
+  "Settings go in `/srv/pg/node1/postgresql.conf` (or `ALTER SYSTEM`, which writes `postgresql.auto.conf`): `port`, `listen_addresses = 'localhost'`, `shared_buffers`. `shared_buffers` needs a restart.",
+  "Since PostgreSQL 15 nobody but the database owner can create objects in `public`. Make a schema `app` owned by `parcels_owner` and `GRANT USAGE, CREATE ON SCHEMA app TO parcels_app`.",
+  "Check your `pg_hba.conf` the way the server sees it: `SELECT type, database, user_name, address, auth_method FROM pg_hba_file_rules;`",
+]
+solution = """
+```bash
+initdb -D /srv/pg/node1 --data-checksums -E UTF8 --locale=C.UTF-8 --auth-local=peer --auth-host=scram-sha-256
+cat >> /srv/pg/node1/postgresql.conf <<'CONF'
+port = 5432
+listen_addresses = 'localhost'
+shared_buffers = 256MB
+CONF
+dbctl start node1
+node1 <<'SQL'
+CREATE ROLE parcels_owner NOLOGIN;
+CREATE ROLE parcels_app LOGIN PASSWORD 'Parcel-App-2026';
+CREATE DATABASE parcels OWNER parcels_owner ENCODING 'UTF8';
+\\c parcels
+CREATE SCHEMA app AUTHORIZATION parcels_owner;
+GRANT USAGE, CREATE ON SCHEMA app TO parcels_app;
+SQL
+PGPASSWORD=Parcel-App-2026 psql -h 127.0.0.1 -U parcels_app -d parcels -c 'CREATE TABLE app.hello (id int)'
+```
+**Lesson:** a bare `initdb` gives you `trust` authentication (anyone on the box is any user, including the
+superuser) and no checksums. Decide auth at initdb time with `--auth-local=peer --auth-host=scram-sha-256`.
+Turn on checksums so silent disk corruption is detected (and so `pg_rewind` works later without `wal_log_hints`).
+Separate the **owner** of the data (a role nobody logs in as) from the **app login**, and grant the app exactly
+what it needs. Since PostgreSQL 15, `public` is no longer a free-for-all, so give the app its own schema.
+"""

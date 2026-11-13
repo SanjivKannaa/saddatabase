@@ -1,0 +1,53 @@
+engine = "postgres"
+base = "pg-lab"
+title = "A second copy"
+difficulty = "medium"
+minutes = 30
+box_minutes = 30
+order = 4
+tags = ["postgres", "streaming replication", "pg_basebackup", "replication slots", "pg_hba.conf"]
+summary = "Build a hot standby of production with pg_basebackup, a replication role and a slot, while parcels keep moving."
+narrative = """
+**Dana:** After the DELETE, the board asked one question: "what if the server itself dies?" We need a live copy.
+`node2` is an empty data directory on the same box for now; we'll move it to its own hardware later.
+
+**Tomás:** I, uh, tuned some replication settings to zero last year to save memory. Shouldn't matter, right?
+"""
+description = """
+Make **`node2`** (`/srv/pg/node2`, port **5433**) a **streaming hot standby** of **`node1`** (port 5432), which is
+taking live traffic right now.
+
+1. node2 streams from node1 using a **dedicated replication role** (not `postgres`, not a superuser),
+   authenticated with a password (SCRAM) over TCP `127.0.0.1`.
+2. node2 uses a **physical replication slot** on node1, so node1 keeps the WAL node2 still needs.
+3. node2 accepts **read-only queries** while it replicates, and stays a standby after a restart.
+4. node1 keeps serving the app: restart it if you must, but bring it straight back.
+
+The grader writes on node1 and expects the row on node2 within seconds.
+"""
+hints = [
+  "On node1: `SHOW max_wal_senders;`. A primary needs WAL sender processes to stream to a standby, and that setting only changes with a restart.",
+  "Create the role with `LOGIN REPLICATION PASSWORD '...'`, and add a `host replication <role> 127.0.0.1/32 scram-sha-256` line to node1's `pg_hba.conf`. The `replication` keyword in the database column is special: `all` doesn't cover it. Then `SELECT pg_reload_conf()` (or the restart).",
+  "`pg_basebackup -h 127.0.0.1 -p 5432 -U <role> -D /srv/pg/node2 -X stream -R -C -S node2` copies the cluster, creates the slot (`-C -S`) and writes `standby.signal` plus `primary_conninfo` (`-R`).",
+  "node2 is a copy of node1, *including its `port = 5432`*. Change node2's port before `dbctl start node2`.",
+]
+solution = """
+```bash
+node1 <<'SQL'
+ALTER SYSTEM SET max_wal_senders = 10;
+CREATE ROLE replicator LOGIN REPLICATION PASSWORD 'Repl-Parcel-2026';
+SQL
+echo "host  replication  replicator  127.0.0.1/32  scram-sha-256" >> /srv/pg/node1/pg_hba.conf
+dbctl restart node1
+PGPASSWORD=Repl-Parcel-2026 pg_basebackup -h 127.0.0.1 -p 5432 -U replicator -D /srv/pg/node2 -X stream -R -C -S node2 -c fast
+printf "port = 5433\\ncluster_name = 'node2'\\n" >> /srv/pg/node2/postgresql.auto.conf
+dbctl start node2
+node1 -c 'select application_name, usename, state, sync_state from pg_stat_replication'
+node2 -c 'select status, sender_port, slot_name from pg_stat_wal_receiver'
+```
+**Lesson:** streaming replication needs three things on the primary: WAL senders (`max_wal_senders`, restart),
+a role with the `REPLICATION` attribute, and a `pg_hba.conf` line for the special `replication` database.
+`pg_basebackup -R` does the rest: a consistent copy plus `standby.signal` and `primary_conninfo`, so the
+standby comes back as a standby after any restart. The **slot** makes the primary keep WAL until the standby has
+it, so a standby that falls behind catches up instead of needing a rebuild. The flip side is the next chapter.
+"""

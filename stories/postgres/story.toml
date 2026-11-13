@@ -1,0 +1,46 @@
+id = "postgres"
+engine = "postgres"
+title = "Parcelpoint"
+subtitle = "A PostgreSQL story: from initdb to failover and the vacuum that couldn't"
+outro = "Story complete. Parcelpoint's parcels are safe with you."
+cast = [
+  { name = "Dana", role = "Head of engineering", avatar = "🧭" },
+  { name = "Tomás", role = "Backend developer", avatar = "🛠️" },
+  { name = "Inês", role = "Ops & on-call", avatar = "📟" },
+]
+intro = """
+**Parcelpoint** delivers parcels across Portugal: a few vans, a lot of tracking numbers, and one PostgreSQL 16
+server that Tomás set up during a hackathon and nobody has touched since. No backups anyone has tested. No
+replica. A config file with comments like `# TODO ask someone`.
+
+Dana just raised a round and hired a DBA. That's you.
+
+Over the coming weeks you'll build their PostgreSQL setup properly: a clean cluster, a major-version upgrade,
+point-in-time recovery, streaming replication, a disk that fills up, a dead primary and a vacuum that can't do
+its job. Every chapter is a real box with real PostgreSQL servers: you do the work, the grader checks it.
+"""
+
+[[acts]]
+title = "Act I · Day one"
+intro = "Before touching production, Dana wants you to show her what a properly set-up cluster looks like. Then production gets its overdue upgrade."
+chapters = ["pg-story-01-initdb", "pg-story-02-upgrade"]
+
+[[acts]]
+title = "Act II · Don't lose the data"
+intro = "Tomás set up WAL archiving \"just in case\" and never tried a restore. Today is the day."
+chapters = ["pg-story-03-pitr"]
+
+[[acts]]
+title = "Act III · A second copy"
+intro = "One server is one bad disk away from no deliveries. You add a standby, and meet the ways WAL can pile up."
+chapters = ["pg-story-04-standby", "pg-story-05-wal-disk"]
+
+[[acts]]
+title = "Act IV · When the primary dies"
+intro = "3 a.m., node1 goes dark mid-shift. Promote the right standby, re-home the others, and bring the old primary back without a split brain."
+chapters = ["pg-story-06-failover"]
+
+[[acts]]
+title = "Act V · The long tail"
+intro = "Everything works, but the tracking table keeps growing and autovacuum is busy all day. Something is holding the horizon back."
+chapters = ["pg-story-07-horizon"]

@@ -1,0 +1,9 @@
+export PATH=/usr/lib/postgresql/17/bin:$PATH PGHOST=/var/run/postgresql TERM=xterm-256color
+export PAGER='less -SFRX' PSQL_PAGER='less -SFRX' LESS=-SFRX
+export PS1='\[\e[1;35m\]postgres@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]$ '
+alias ll='ls -la'
+if [ -z "$SAD_MOTD_SHOWN" ]; then export SAD_MOTD_SHOWN=1; cat /etc/motd; [ -f ~/README.md ] && echo " start here: cat ~/README.md"; echo; fi
+# show the welcome banner again: welcome / motd / help (help <builtin> still gives bash's help)
+welcome() { cat /etc/motd; [ -f ~/README.md ] && echo " start here: cat ~/README.md"; echo " banner again: welcome (or help)"; echo; }
+alias motd=welcome
+help() { if [ $# -gt 0 ]; then builtin help "$@"; else welcome; fi; }

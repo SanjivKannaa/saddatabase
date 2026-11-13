@@ -1,0 +1,68 @@
+engine = "postgres"
+base = "pg-lab"
+title = "DELETE without a WHERE"
+difficulty = "hard"
+minutes = 35
+box_minutes = 35
+order = 3
+tags = ["postgres", "pitr", "pg_basebackup", "wal archiving", "recovery_target"]
+summary = "Every shipment is gone. Restore them to the second before the DELETE, without losing anything else."
+narrative = """
+**Inês:** The tracking page says "no shipments found" for everyone. Every. Single. Customer.
+
+**Tomás:** I was cleaning up old label-only shipments in psql and… I forgot the `WHERE`. In production. 😶
+
+**Dana:** We have last night's base backup and WAL archiving has been on since Tomás set it up. Never been
+tested, but here we are. Bring back **every shipment as it was right before that DELETE**, including today's.
+And whatever happened *after* the DELETE (tracking events, customer changes) stays.
+"""
+description = """
+On **`node1`** (port 5432), `DELETE FROM shipments` ran without a `WHERE` this afternoon. The server is still up
+and other tables kept changing after the accident.
+
+Restore **`parcels.shipments` exactly as it was immediately before the DELETE**: last night's rows *and*
+everything created or updated today.
+
+- **`tracking_events` and `customers`** already have changes from *after* the DELETE: they must stay as they are now.
+- `node1` keeps running as the production server (same cluster, same timeline). Don't replace it with a restore.
+- The production WAL archive **`/srv/wal_archive`** must not get a new timeline from your restore.
+
+What you have: the nightly `pg_basebackup` in `/backups/nightly/` (tar format), the WAL archive in
+`/srv/wal_archive`, and node1's log in `/var/log/postgresql/node1.log`. A spare data directory `/srv/pg/node2`
+(port 5433) is yours to use.
+"""
+hints = [
+  "The plan: restore the base backup into `/srv/pg/node2`, replay the archived WAL up to just before the DELETE, read the shipments from there, put them back into node1.",
+  "When did it happen? node1 logs data-changing statements: `grep -n 'DELETE FROM shipments' /var/log/postgresql/node1.log`. Each line starts with a millisecond timestamp. (`pg_waldump` on the archived segments works too.)",
+  "Restore: `mkdir -m 700 /srv/pg/node2`, extract `base.tar.gz` into it and `pg_wal.tar.gz` into its `pg_wal/`. In its `postgresql.auto.conf` set `port = 5433`, `archive_mode = off`, `restore_command = 'cp /srv/wal_archive/%f %p'`, `recovery_target_time = '<timestamp> UTC'`, then `touch /srv/pg/node2/recovery.signal` and `dbctl start node2`.",
+  "Don't promote the restored copy (that's what writes a new timeline's `.history` file). With the default `recovery_target_action = 'pause'` it stops at the target and stays readable: `pg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels` after emptying node1's table.",
+]
+solution = """
+```bash
+T=$(grep -m1 'DELETE FROM shipments' /var/log/postgresql/node1.log | awk '{print $1, $2, $3}')
+mkdir -m 700 /srv/pg/node2
+tar -xzf /backups/nightly/base.tar.gz -C /srv/pg/node2
+tar -xzf /backups/nightly/pg_wal.tar.gz -C /srv/pg/node2/pg_wal
+cat >> /srv/pg/node2/postgresql.auto.conf <<CONF
+port = 5433
+archive_mode = off
+restore_command = 'cp /srv/wal_archive/%f %p'
+recovery_target_time = '$T'
+recovery_target_action = 'pause'
+CONF
+touch /srv/pg/node2/recovery.signal
+dbctl start node2
+node2 -Atc 'select pg_get_wal_replay_pause_state()'        # paused
+node2 -d parcels -Atc 'select count(*) from shipments'      # they're back
+node1 -d parcels -c 'TRUNCATE shipments'
+pg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels
+dbctl stop node2
+```
+**Lesson:** a base backup alone takes you back to last night. The **WAL archive** is what takes you to *any
+second since*: restore the base backup somewhere else, give it a `restore_command`, a `recovery_target_time`
+(or `_xid`, `_lsn`, `_name`) and a `recovery.signal`, and it replays history up to that point. Commits after the
+target are left out, so a target taken from the statement's start time stops just before the DELETE committed.
+Restore to a **side copy** and move only the damaged table back: production keeps everything that happened
+after the accident. Keep the copy paused rather than promoted, and turn off its archiving, so it never writes a
+new timeline into the production archive. And test this before you need it.
+"""

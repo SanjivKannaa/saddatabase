@@ -1,0 +1,78 @@
+engine = "postgres"
+base = "pg-lab"
+title = "The primary is gone"
+difficulty = "hard"
+minutes = 40
+box_minutes = 40
+order = 6
+tags = ["postgres", "failover", "pg_promote", "synchronous replication", "pg_rewind", "timelines"]
+summary = "node1 died mid-shift. Promote the right standby, get writes flowing, re-home the others and rejoin node1 with pg_rewind."
+narrative = """
+**Inês (03:12):** node1 just went dark. Power supply, I think, I'm driving to the office. The drivers' app can't
+save deliveries. You have node2 and node3.
+
+**Tomás (half asleep):** node2 is the synchronous one. node3 is… fine? I rotated the replication password last
+week, I think I updated everything.
+
+**Dana:** Get the app writing again without losing a single acknowledged delivery. And when Inês brings node1
+back, it must **not** come up as a second primary.
+"""
+description = """
+**`node1`** (port 5432), the primary, has crashed and its host is offline. **`node2`** (5433) and **`node3`**
+(5434) were its standbys. The app reads its target from **`/srv/app/db.env`** (`DB_PORT`) and retries every
+few hundred milliseconds.
+
+1. **Promote the right standby**: the new primary must have **every delivery the app was told was saved**.
+2. **Writes must work** on the new primary (the app and the grader both write), and the app points at it.
+3. The **other standby** streams from the new primary and is caught up.
+4. When node1's host comes back (Inês will tell you, watch `~/`), make node1 a **standby of the new primary**.
+   It must never accept writes again as a primary of its own.
+
+In the end: one primary, two streaming standbys, the app writing to the primary. Replication role:
+`replicator`, password `Repl-Parcel-2026`.
+"""
+hints = [
+  "Which standby has everything? `nodeN -c 'select pg_last_wal_replay_lsn(), pg_last_wal_receive_lsn()'` and `select * from pg_stat_wal_receiver` on each. Is node3 even connected? Read its log.",
+  "`select pg_promote()` on the standby you chose. If writes then hang forever, look at what the new primary is waiting for: `SHOW synchronous_standby_names;` (configs are often identical on every node).",
+  "To re-home a standby, edit `primary_conninfo` (and `primary_slot_name`) in its `postgresql.auto.conf`. Both reload without a restart, but the slot must exist on the new primary: `pg_create_physical_replication_slot('...')`.",
+  "node1 crashed while it was primary, so it may have WAL the new primary never got. `pg_rewind -D /srv/pg/node1 --source-server='port=5433 user=postgres dbname=postgres'` winds it back to the fork point. Then give it `standby.signal`, `primary_conninfo` and a slot, and start it.",
+  "`pg_rewind` copies the source's configuration files too: node1 now has node2's `postgresql.auto.conf` (port 5433!). Set node1's `port = 5432` (and `cluster_name`) again before starting it.",
+]
+solution = """
+```bash
+for n in 2 3; do node$n -Atc "select $n, pg_last_wal_replay_lsn(), (select status from pg_stat_wal_receiver)"; done
+tail -3 /var/log/postgresql/node3.log            # password authentication failed: node3 is a week behind
+node2 -c 'select pg_promote()'
+node2 <<'SQL'
+ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (node1, node3)';  -- or '' while you rebuild
+SELECT pg_reload_conf();
+SELECT pg_create_physical_replication_slot('node1');
+SELECT pg_create_physical_replication_slot('node3');
+SQL
+sed -i 's/^DB_PORT=.*/DB_PORT=5433/' /srv/app/db.env
+cat >> /srv/pg/node3/postgresql.auto.conf <<'CONF'
+primary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parcel-2026 application_name=node3'
+primary_slot_name = 'node3'
+CONF
+node3 -c 'select pg_reload_conf()'
+# ... node1's host is back:
+pg_rewind -D /srv/pg/node1 --source-server='port=5433 user=postgres dbname=postgres' --progress
+cat >> /srv/pg/node1/postgresql.auto.conf <<'CONF'     # pg_rewind copied node2's config: port 5433
+port = 5432
+cluster_name = 'node1'
+primary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parcel-2026 application_name=node1'
+primary_slot_name = 'node1'
+CONF
+touch /srv/pg/node1/standby.signal
+dbctl start node1
+node2 -c 'select application_name, state, sync_state from pg_stat_replication'
+```
+**Lesson:** promote the standby that has **all** acknowledged commits: with synchronous replication that's the
+synchronous one, and you verify by comparing replay LSNs, not by trusting what people remember (node3 had been
+failing to authenticate for a week, unnoticed). Promotion opens a new **timeline**. Standbys that are behind the
+fork point can follow it after you point them at the new primary; the old primary, which may have WAL past the
+fork, needs **`pg_rewind`** (possible because of data checksums or `wal_log_hints`) before it can rejoin, and
+`pg_rewind` brings the source's config files along, so re-check port and conninfo. Configs
+copied to every node travel with the role change: a `synchronous_standby_names` that named the old standby makes
+the new primary wait forever for a sync standby that doesn't exist.
+"""
