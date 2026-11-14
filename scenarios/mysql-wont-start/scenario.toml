@@ -10,10 +10,10 @@ During the upgrade from MySQL 5.7, an engineer copied the old tuning file to
 `/etc/mysql/conf.d/`. Now **mysqld won't start**.
 
 Get MySQL running with database `inventory` intact (table `items` must still have its 5000 rows).
-Start it with `dbctl start`.
+Start it with `sudo systemctl start mysql`.
 """
 hints = [
-  "`dbctl start` and read what it says. If it says little, look for the error log path in the config.",
+  "`sudo systemctl start mysql`, then `journalctl -xeu mysql` for what mysqld said. If it says little, look for the error log path in the config.",
   "Where is mysqld trying to write its error log? Does that directory exist, and can you create it?",
   "Some server variables were **removed** in MySQL 8.0. An unknown variable stops the server cold.",
 ]
@@ -28,7 +28,7 @@ Two problems in `/etc/mysql/conf.d/legacy-tuning.cnf`:
 
 ```
 nano /etc/mysql/conf.d/legacy-tuning.cnf
-dbctl start
+sudo systemctl start mysql
 mysql -e 'select count(*) from inventory.items'
 ```
 **Lesson:** after a major upgrade, diff your config against the removed-variables list, and

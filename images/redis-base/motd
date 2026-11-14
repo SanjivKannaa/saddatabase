@@ -1,10 +1,10 @@
 
  sadDatabase · Redis 8
  ─────────────────────
- you     redis (OS user, no sudo)
+ you     redis (OS user; sudo: systemctl only)
  client  redis-cli
  config  /etc/redis/redis.conf
  data    /srv/redis
  log     /var/log/redis/redis.log
- server  dbctl start|stop|restart|status
+ server  sudo systemctl start|stop|restart|status redis-server
 

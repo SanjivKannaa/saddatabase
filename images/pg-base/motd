@@ -1,9 +1,10 @@
 
  sadDatabase · PostgreSQL 17
  ───────────────────────────
- you    postgres (OS user, no sudo)
+ you    postgres (OS user; sudo: systemctl only)
  data   /srv/pgdata  ($PGDATA)
  log    /var/log/postgresql/postgresql.log
- tools  psql pg_ctl dbctl ps less nano vi
+ tools  psql pg_ctl ps less nano vi
+ server sudo systemctl start|stop|restart|status postgresql
  net    none: this box is isolated
 

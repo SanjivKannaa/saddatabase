@@ -29,7 +29,7 @@ hints = [
   "On node1: `SHOW max_wal_senders;`. A primary needs WAL sender processes to stream to a standby, and that setting only changes with a restart.",
   "Create the role with `LOGIN REPLICATION PASSWORD '...'`, and add a `host replication <role> 127.0.0.1/32 scram-sha-256` line to node1's `pg_hba.conf`. The `replication` keyword in the database column is special: `all` doesn't cover it. Then `SELECT pg_reload_conf()` (or the restart).",
   "`pg_basebackup -h 127.0.0.1 -p 5432 -U <role> -D /srv/pg/node2 -X stream -R -C -S node2` copies the cluster, creates the slot (`-C -S`) and writes `standby.signal` plus `primary_conninfo` (`-R`).",
-  "node2 is a copy of node1, *including its `port = 5432`*. Change node2's port before `dbctl start node2`.",
+  "node2 is a copy of node1, *including its `port = 5432`*. Change node2's port before `sudo systemctl start postgresql@node2`.",
 ]
 solution = """
 ```bash
@@ -38,10 +38,10 @@ ALTER SYSTEM SET max_wal_senders = 10;
 CREATE ROLE replicator LOGIN REPLICATION PASSWORD 'Repl-Parcel-2026';
 SQL
 echo "host  replication  replicator  127.0.0.1/32  scram-sha-256" >> /srv/pg/node1/pg_hba.conf
-dbctl restart node1
+sudo systemctl restart postgresql@node1
 PGPASSWORD=Repl-Parcel-2026 pg_basebackup -h 127.0.0.1 -p 5432 -U replicator -D /srv/pg/node2 -X stream -R -C -S node2 -c fast
 printf "port = 5433\\ncluster_name = 'node2'\\n" >> /srv/pg/node2/postgresql.auto.conf
-dbctl start node2
+sudo systemctl start postgresql@node2
 node1 -c 'select application_name, usename, state, sync_state from pg_stat_replication'
 node2 -c 'select status, sender_port, slot_name from pg_stat_wal_receiver'
 ```

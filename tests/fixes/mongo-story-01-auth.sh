@@ -7,4 +7,4 @@ db.createUser({ user: 'verdant_ro', pwd: 'Verdant-RO-2026', roles: [{ role: 'rea
 JS
 sed -i 's/bindIp: 0.0.0.0/bindIp: 127.0.0.1/' /etc/mongodb/nodes/node1.conf
 printf 'security:\n  authorization: enabled\n' >> /etc/mongodb/nodes/node1.conf
-dbctl restart node1
+sudo systemctl restart mongod@node1

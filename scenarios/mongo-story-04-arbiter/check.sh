@@ -12,7 +12,7 @@ const fail = m => { print('FAIL: ' + m); quit(1); };
 const conf = rs.conf();
 const st0 = rs.status();
 const n2 = st0.members.find(m => m.name.endsWith(':27018'));
-if (!n2 || n2.health !== 1) fail('node2 (27018) is still down: dbctl start node2 and read what it says');
+if (!n2 || n2.health !== 1) fail('node2 (27018) is still down: sudo systemctl start mongod@node2, then journalctl -xeu mongod@node2');
 const arb = conf.members.filter(m => m.arbiterOnly);
 if (arb.length) fail(arb.map(m => m.host).join(', ') + ' is still an arbiter: replace it with a data-bearing member');
 if (conf.members.length !== 3) fail('rs0 has ' + conf.members.length + ' members, not 3');

@@ -9,10 +9,10 @@ description = """
 Someone "cleaned up" `/etc/mongodb/mongod.conf` and now **mongod won't start**.
 
 Get it running with all data intact: database `inventory`, collection `items`, 5000 documents.
-Start it with `dbctl start`.
+Start it with `sudo systemctl start mongod`.
 """
 hints = [
-  "`dbctl start` prints mongod's complaint. Fix one thing, then try again.",
+  "`sudo systemctl start mongod` fails; `journalctl -xeu mongod` shows mongod's complaint. Fix one thing, then try again.",
   "YAML is picky about indentation. `cat -A /etc/mongodb/mongod.conf` shows tabs as `^I`.",
   "Where is the data actually? `ls /srv`. Pointing mongod at an empty directory would start it, with no data.",
 ]
@@ -27,7 +27,7 @@ Two problems in `/etc/mongodb/mongod.conf`:
 ```
 cat -A /etc/mongodb/mongod.conf | grep -n '\\^I'
 nano /etc/mongodb/mongod.conf
-dbctl start
+sudo systemctl start mongod
 mongosh --quiet inventory --eval 'db.items.countDocuments()'
 ```
 **Lesson:** read the startup error, and never "fix" a missing data dir by creating an empty one.

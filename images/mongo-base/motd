@@ -1,10 +1,10 @@
 
  sadDatabase · MongoDB 7.0
  ─────────────────────────
- you     mongodb (OS user, no sudo)
+ you     mongodb (OS user; sudo: systemctl only)
  shell   mongosh
  config  /etc/mongodb/mongod.conf
  data    /srv/mongo
  log     /var/log/mongodb/mongod.log
- server  dbctl start|stop|restart|status
+ server  sudo systemctl start|stop|restart|status mongod
 

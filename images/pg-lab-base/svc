@@ -1,5 +1,5 @@
 #!/bin/bash
-# dbctl start|stop|restart|status [node1|node2|node3|all]   (default: every node that has a data directory)
+# svc (backend for systemctl; not on PATH) start|stop|restart|status [node1|node2|node3|all]   (default: every node that has a data directory)
 # Node N: data dir /srv/pg/nodeN (postgresql.conf, pg_hba.conf inside), log /var/log/postgresql/nodeN.log.
 # The binaries follow the cluster's PG_VERSION (16 or 17).
 act=${1:-status}; target=${2:-all}
@@ -28,6 +28,11 @@ status() {
   elif [ -f /etc/sad/$n.dead ]; then echo "$n: DOWN ($(cat /etc/sad/$n.dead))"
   else echo "$n: stopped"; fi
 }
+case $act in
+  items) target=all; nodes; exit 0 ;;
+  pid) target=${target/#[0-9]/node$target}; alive $target && head -1 /srv/pg/$target/postmaster.pid; exit 0 ;;
+  reload) target=${target/#[0-9]/node$target}; "$(bin $target)/pg_ctl" -D /srv/pg/$target reload; exit ;;
+esac
 rc=0
 [ -n "$(nodes)" ] || { echo "no clusters under /srv/pg yet"; exit 0; }
 case $act in

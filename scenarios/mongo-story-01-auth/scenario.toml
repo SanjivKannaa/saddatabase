@@ -30,7 +30,7 @@ hints = [
   "The **localhost exception**: with access control on and no users yet, a client on localhost can create the first user. Or create the users first and turn auth on afterwards.",
   "Look at the app's connection string: `authSource=verdant` means its user must be created **in the `verdant` database** (`use verdant` then `db.createUser(...)`), not in `admin`.",
   "`roles: [{ role: 'readWrite', db: 'verdant' }]` for the app, `'read'` for the dashboard, `[{ role: 'root', db: 'admin' }]` for the admin.",
-  "In `/etc/mongodb/nodes/node1.conf`: `net.bindIp: 127.0.0.1` and a `security:` section with `authorization: enabled`. Then `dbctl restart node1`.",
+  "In `/etc/mongodb/nodes/node1.conf`: `net.bindIp: 127.0.0.1` and a `security:` section with `authorization: enabled`. Then `sudo systemctl restart mongod@node1`.",
 ]
 solution = """
 ```bash
@@ -43,7 +43,7 @@ db.createUser({ user: 'verdant_ro', pwd: 'Verdant-RO-2026', roles: [{ role: 'rea
 JS
 sed -i 's/bindIp: 0.0.0.0/bindIp: 127.0.0.1/' /etc/mongodb/nodes/node1.conf
 printf 'security:\\n  authorization: enabled\\n' >> /etc/mongodb/nodes/node1.conf
-dbctl restart node1
+sudo systemctl restart mongod@node1
 . /srv/app/app.env && mongosh "$MONGO_URL" --quiet --eval 'db.devices.countDocuments()'
 ```
 **Lesson:** without `authorization: enabled`, anyone who reaches the port is effectively root. Turn it on, bind

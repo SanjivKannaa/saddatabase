@@ -10,8 +10,8 @@ recovery_target_time = '$T'
 recovery_target_action = 'pause'
 CONF
 touch /srv/pg/node2/recovery.signal
-dbctl start node2
+sudo systemctl start postgresql@node2
 for i in $(seq 60); do [ "$(node2 -Atc 'select pg_get_wal_replay_pause_state()')" = paused ] && break; sleep 0.5; done
 node1 -d parcels -c 'TRUNCATE shipments'
 pg_dump -p 5433 -d parcels -t shipments --data-only | psql -X -q -d parcels
-dbctl stop node2
+sudo systemctl stop postgresql@node2

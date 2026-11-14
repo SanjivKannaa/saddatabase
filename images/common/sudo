@@ -1,0 +1,33 @@
+#!/bin/bash
+# sudo for sadDatabase boxes. Not the real (setuid) sudo: nothing here runs as root. The sudoers policy it
+# mimics lets the database account run the service manager without a password, and nothing else. The commands
+# run as you, which is all they need: you own the database files.
+me=$(id -un); host=$(cat /etc/hostname 2>/dev/null || echo localhost)
+allowed="systemctl service journalctl"
+deny() { echo "Sorry, user $me is not allowed to execute '$*' as ${as:-root} on $host." >&2; exit 1; }
+as=root
+while [ $# -gt 0 ]; do
+  case $1 in
+    -l|--list) printf 'User %s may run the following commands on %s:\n    (root) NOPASSWD: /usr/bin/systemctl, /usr/sbin/service, /usr/bin/journalctl\n' "$me" "$host"; exit 0 ;;
+    -v|--validate|-k|-K|--reset-timestamp|--remove-timestamp) exit 0 ;;
+    -V|--version) echo "Sudo version 1.9.15p5"; exit 0 ;;
+    -h|--help) echo "usage: sudo [-u user] command"; echo "Allowed here: $allowed"; exit 0 ;;
+    -u) as=$2; shift ;;
+    -u*) as=${1#-u} ;;
+    --user=*) as=${1#*=} ;;
+    -i|--login|-s|--shell) deny "${SHELL:-/bin/bash}" ;;
+    -e|--edit) shift; deny "sudoedit $*" ;;
+    --) shift; break ;;
+    -*) ;;   # -n, -E, -H, -S, -p ...: accepted
+    *) break ;;
+  esac
+  shift
+done
+[ $# -gt 0 ] || { echo "usage: sudo [-u user] command" >&2; exit 1; }
+[ "$as" = "$me" ] && exec "$@"   # sudo -u <yourself> ...
+[ "$as" = root ] || [ "$as" = "#0" ] || deny "$@"
+cmd=$(basename -- "$1")
+case " $allowed " in *" $cmd "*) ;; *) deny "$@" ;; esac
+shift
+export SUDO_USER=$me SUDO_UID=$(id -u) SUDO_GID=$(id -g) SUDO_COMMAND="$cmd $*"
+exec "/usr/local/bin/$cmd" "$@"

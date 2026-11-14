@@ -20,7 +20,7 @@ Make **`node2`** (port 3307) a live replica of **`node1`** (port 3306, `bookstor
 3. node2 must be **read-only for everyone** (including root), and stay that way after a restart.
 4. Both servers keep running; don't stop the writes on node1.
 
-`node1` / `node2` open a root client on each; `dbctl status` / `dbctl restart node2`; configs are in
+`node1` / `node2` open a root client on each; `systemctl status` / `sudo systemctl restart mysql@node2`; configs are in
 `/etc/mysql/nodes/`. The grader writes on node1 and expects to see it on node2 within seconds.
 """
 hints = [
@@ -37,7 +37,7 @@ node1 -e "CREATE USER 'repl'@'127.0.0.1' IDENTIFIED BY 'Repl-Lumen-2026'; GRANT 
 # 2. fix node2's config: unique server_id, GTIDs on
 sed -i 's/^server_id .*/server_id = 2/; /^gtid_mode/d; /^enforce_gtid_consistency/d' /etc/mysql/nodes/node2.cnf
 printf 'gtid_mode = ON\\nenforce_gtid_consistency = ON\\n' >> /etc/mysql/nodes/node2.cnf
-dbctl restart node2
+sudo systemctl restart mysql@node2
 
 # 3. seed: a consistent snapshot that carries its GTID position
 node2 -e "RESET BINARY LOGS AND GTIDS"

@@ -29,7 +29,7 @@ cat > /home/player/README.md <<'MD'
   node1   primary   127.0.0.1:6379
   node2   replica   127.0.0.1:6380
   node3   replica   127.0.0.1:6381
-  sentinels         127.0.0.1:26379, 26380, 26381   (to do: /etc/redis/sentinel/sentinelN.conf, dbctl start sentinelN)
+  sentinels         127.0.0.1:26379, 26380, 26381   (to do: /etc/redis/sentinel/sentinelN.conf, sudo systemctl start redis-sentinel@sentinelN)
   master name       quickbite, quorum 2, notice a dead primary within 5 s
 
   ACL users on every node

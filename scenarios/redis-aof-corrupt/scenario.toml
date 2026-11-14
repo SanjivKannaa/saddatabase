@@ -10,10 +10,10 @@ The host crashed while Redis was writing, and now **Redis won't start**.
 
 Get Redis running again with **append-only persistence still on**, keeping as much data as possible
 (there were 10,000 `key:*` keys; losing a few of the last writes is acceptable).
-Start it with `dbctl start`.
+Start it with `sudo systemctl start redis-server`.
 """
 hints = [
-  "`dbctl start`, then read the end of `/var/log/redis/redis.log`. It tells you exactly what to run.",
+  "`sudo systemctl start redis-server`, then read the end of `/var/log/redis/redis.log`. It tells you exactly what to run.",
   "Since Redis 7 the AOF is a directory: `ls -la /srv/redis/appendonlydir/`. There's a manifest, a base file and an incremental file.",
   "`redis-check-aof` can repair it. Back up the directory first: `cp -a /srv/redis/appendonlydir ~/aof-backup`.",
 ]
@@ -24,7 +24,7 @@ The AOF has garbage in it, so Redis stops rather than load a possibly wrong data
 ```
 cp -a /srv/redis/appendonlydir ~/aof-backup      # always keep the original
 redis-check-aof --fix /srv/redis/appendonlydir/appendonly.aof.manifest
-dbctl start
+sudo systemctl start redis-server
 redis-cli dbsize                                 # ~9,950 of 10,000
 ```
 `--fix` truncates the file at the first bad command, so everything after it is lost. Disabling

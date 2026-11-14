@@ -65,10 +65,10 @@ Food delivery. Several `redis-server` nodes and Sentinels per box (`node1..3` on
 ### How stories are built
 A story lives in `stories/<engine>/story.toml` (intro, cast, `outro`, acts → chapter slugs); chapters are ordinary
 scenarios (`scenarios/<engine>-story-*`) with `base = "<engine>-lab"`, a `narrative` and an optional `box_minutes`.
-Each engine has a lab base image that runs several nodes in one box with `dbctl start|stop|status nodeN`, `node1..3`
+Each engine has a lab base image that runs several nodes in one box as `<unit>@nodeN` services (`sudo systemctl start postgresql@node2`), `node1..3`
 clients and a shared data loader: `images/pg-lab-base` (PostgreSQL 17 + 16 binaries), `images/mysql-lab-base`
 (tools from `bin/fetch-vendor`: MySQL tarball, gh-ost, orchestrator; checksums pinned in `vendor.sha256`),
-`images/mongo-lab-base`, `images/redis-lab-base` (also `dbctl start sentinelN`). An image can ask for more
+`images/mongo-lab-base`, `images/redis-lab-base` (also `redis-sentinel@sentinelN`). An image can ask for more
 processes with a `saddb.pids` label (default 256; the MongoDB base uses 768).
 
 ## Play in your terminal (no login)
@@ -107,7 +107,13 @@ On magickite it's published as https://sad.db.magickite by `sudo deploy/install-
   `saddb.mem` label, 1 CPU, 256 pids (or the `saddb.pids` label), `no-new-privileges`. Labelled with its owner, and every API and
   terminal call checks ownership. The reaper removes expired boxes and closes their attempts.
 - **The player** is the database's service account (`postgres`, `mysql`, `mongodb`, `redis`; image label
-  `saddb.user`), without sudo, with `dbctl start|stop|restart|status`. `/opt/sad` (graders, setup) is root-only.
+  `saddb.user`). `/opt/sad` (graders, setup) is root-only.
+- **Services**: there's no systemd in a box, so `systemctl`, `service`, `journalctl` and `sudo` are small stand-ins
+  (`images/common`). `systemctl start|stop|restart|reload|status|is-active|list-units` and `journalctl -u` work on
+  the image's units (`postgresql`, `mysql`, `mongod`, `redis-server`; lab images `<unit>@nodeN`, per
+  `/usr/local/lib/sad/unit.env`) and drive the per-image backend `/usr/local/lib/sad/svc` as the player.
+  `sudo` is a plain script, not setuid (boxes run with `no-new-privileges`): it allows only those three commands
+  and runs them as the player, so it grants nothing the player didn't already have. Setup and graders call `svc`.
 - **Terminal**: xterm.js ⇄ WebSocket (same-origin check + session cookie) ⇄ `docker exec bash -l`.
 - **Grading**: `/opt/sad/check.sh` runs as root in the box; exit 0 = solved. MySQL's grader logs in with its own
   `auth_socket` account, so it works even if the player changes the root password.

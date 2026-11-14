@@ -34,7 +34,7 @@ What you have: the nightly `pg_basebackup` in `/backups/nightly/` (tar format), 
 hints = [
   "The plan: restore the base backup into `/srv/pg/node2`, replay the archived WAL up to just before the DELETE, read the shipments from there, put them back into node1.",
   "When did it happen? node1 logs data-changing statements: `grep -n 'DELETE FROM shipments' /var/log/postgresql/node1.log`. Each line starts with a millisecond timestamp. (`pg_waldump` on the archived segments works too.)",
-  "Restore: `mkdir -m 700 /srv/pg/node2`, extract `base.tar.gz` into it and `pg_wal.tar.gz` into its `pg_wal/`. In its `postgresql.auto.conf` set `port = 5433`, `archive_mode = off`, `restore_command = 'cp /srv/wal_archive/%f %p'`, `recovery_target_time = '<timestamp> UTC'`, then `touch /srv/pg/node2/recovery.signal` and `dbctl start node2`.",
+  "Restore: `mkdir -m 700 /srv/pg/node2`, extract `base.tar.gz` into it and `pg_wal.tar.gz` into its `pg_wal/`. In its `postgresql.auto.conf` set `port = 5433`, `archive_mode = off`, `restore_command = 'cp /srv/wal_archive/%f %p'`, `recovery_target_time = '<timestamp> UTC'`, then `touch /srv/pg/node2/recovery.signal` and `sudo systemctl start postgresql@node2`.",
   "Don't promote the restored copy (that's what writes a new timeline's `.history` file). With the default `recovery_target_action = 'pause'` it stops at the target and stays readable: `pg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels` after emptying node1's table.",
 ]
 solution = """
@@ -51,12 +51,12 @@ recovery_target_time = '$T'
 recovery_target_action = 'pause'
 CONF
 touch /srv/pg/node2/recovery.signal
-dbctl start node2
+sudo systemctl start postgresql@node2
 node2 -Atc 'select pg_get_wal_replay_pause_state()'        # paused
 node2 -d parcels -Atc 'select count(*) from shipments'      # they're back
 node1 -d parcels -c 'TRUNCATE shipments'
 pg_dump -p 5433 -d parcels -t shipments --data-only | psql -d parcels
-dbctl stop node2
+sudo systemctl stop postgresql@node2
 ```
 **Lesson:** a base backup alone takes you back to last night. The **WAL archive** is what takes you to *any
 second since*: restore the base backup somewhere else, give it a `restore_command`, a `recovery_target_time`

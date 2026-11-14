@@ -48,7 +48,7 @@ ROLLBACK PREPARED 'billing_migration_step3';
 ALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min';
 ALTER SYSTEM SET max_prepared_transactions = 0;
 SQL
-dbctl restart node1
+sudo systemctl restart postgresql@node1
 node1 -d parcels -c 'VACUUM (VERBOSE) tracking_events' 2>&1 | grep -E 'removable|dead'
 ```
 **Lesson:** VACUUM can only remove a row version that **no transaction could still see**. The oldest snapshot

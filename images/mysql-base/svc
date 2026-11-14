@@ -1,5 +1,5 @@
 #!/bin/bash
-# dbctl start|stop|restart|status  for mysqld (config: /etc/my.cnf + /etc/mysql/conf.d/*.cnf)
+# svc (backend for systemctl; not on PATH) start|stop|restart|status  for mysqld (config: /etc/my.cnf + /etc/mysql/conf.d/*.cnf)
 PID=/var/run/mysqld/mysqld.pid; LOG=/var/log/mysql/error.log
 alive() { [ -s $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
 start() {
@@ -16,5 +16,6 @@ stop() {
 case $1 in
   start) start ;; stop) stop ;; restart) stop; start ;;
   status) alive && echo "mysqld is running (pid $(cat $PID))" || { echo "mysqld is not running"; exit 3; } ;;
-  *) echo "usage: dbctl start|stop|restart|status" ;;
+  pid) alive && cat $PID ;;
+  *) echo "usage: svc start|stop|restart|status|pid" ;;
 esac

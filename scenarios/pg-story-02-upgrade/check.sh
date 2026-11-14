@@ -5,8 +5,8 @@ v=$(nq 1 'select current_setting($$server_version_num$$)::int / 10000')
 [ "$v" = 17 ] || fail "the server on port 5432 is PostgreSQL $v, not 17"
 pgrep -f '/usr/lib/postgresql/16/bin/postgres' >/dev/null && fail "a PostgreSQL 16 server is still running: the old cluster should stay stopped"
 dir=$(nq 1 'show data_directory'); name=$(basename "$dir")
-[[ "$dir" == /srv/pg/node* ]] || fail "the new cluster lives in $dir: put it in /srv/pg/nodeN so dbctl can manage it"
-runuser -u postgres -- dbctl restart "$name" >/dev/null || fail "$name doesn't come back after a restart: see /var/log/postgresql/$name.log"
+[[ "$dir" == /srv/pg/node* ]] || fail "the new cluster lives in $dir: put it in /srv/pg/nodeN so systemctl (postgresql@nodeN) can manage it"
+runuser -u postgres -- /usr/local/lib/sad/svc restart "$name" >/dev/null || fail "$name doesn't come back after a restart: see /var/log/postgresql/$name.log"
 [ "$(nq 1 'select current_setting($$server_version_num$$)::int / 10000')" = 17 ] || fail "after a restart, port 5432 isn't PostgreSQL 17 any more"
 [ "$(nq 1 "select count(*) from pg_database where datname = 'parcels'")" = 1 ] || fail "there's no parcels database on the new server"
 [ "$(tsum 1 shipments)" = "$(cat /opt/sad/shipments.sum)" ] || fail "parcels.shipments isn't what it was on 16"

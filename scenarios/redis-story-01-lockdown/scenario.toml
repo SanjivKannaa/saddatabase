@@ -44,7 +44,7 @@ node1 CONFIG SET protected-mode yes
 node1 ACL SETUSER default off
 export REDISCLI_AUTH=QB-Admin-2026
 node1 --user admin CONFIG REWRITE
-dbctl restart node1 && node1 --user admin ACL LIST
+sudo systemctl restart redis-server@node1 && node1 --user admin ACL LIST
 ```
 **Lesson:** Redis trusts whoever can reach its port unless you tell it otherwise. Since Redis 6, **ACL users**
 give each client exactly what it needs: key patterns (`~`), channel patterns (`&`) and command categories

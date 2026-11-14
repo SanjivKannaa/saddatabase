@@ -20,7 +20,7 @@ description = """
 for the master named **`quickbite`** before each write.
 
 1. Run **three Sentinels**, `sentinel1..3` on ports **26379, 26380, 26381** (configs in
-   `/etc/redis/sentinel/sentinelN.conf`, started with `dbctl start sentinelN`), monitoring `node1` as
+   `/etc/redis/sentinel/sentinelN.conf`, started with `sudo systemctl start redis-sentinel@sentinelN`), monitoring `node1` as
    **`quickbite`** with a **quorum of 2**. They must see each other and both replicas.
 2. A dead primary is noticed within **5 seconds** (`down-after-milliseconds`).
 3. The grader then **kills the primary**. Within half a minute a replica must be promoted, the other replica
@@ -58,7 +58,7 @@ sentinel auth-pass quickbite QB-Sentinel-2026
 sentinel down-after-milliseconds quickbite 5000
 sentinel failover-timeout quickbite 30000
 CONF
-  dbctl start sentinel$i
+  sudo systemctl start redis-sentinel@sentinel$i
 done
 sleep 5; redis-cli -p 26379 SENTINEL ckquorum quickbite
 ```

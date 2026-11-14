@@ -17,6 +17,6 @@ sentinel auth-pass quickbite QB-Sentinel-2026
 sentinel down-after-milliseconds quickbite 5000
 sentinel failover-timeout quickbite 30000
 CONF
-  dbctl start sentinel$i
+  sudo systemctl start redis-sentinel@sentinel$i
 done
 sleep 6

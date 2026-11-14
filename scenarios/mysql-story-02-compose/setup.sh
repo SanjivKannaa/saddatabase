@@ -28,7 +28,7 @@ cat > /etc/motd <<'MOTD'
 
  sadDatabase · Lumen Books · staging review
  ──────────────────────────────────────────
- you     mysql (OS user, no sudo)
+ you     mysql (OS user; sudo: systemctl only)
  review  ~/deploy/compose.yaml
          ~/deploy/conf.d/lumen.cnf
  note    no Docker daemon here: Check reviews

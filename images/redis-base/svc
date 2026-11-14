@@ -1,5 +1,5 @@
 #!/bin/bash
-# dbctl start|stop|restart|status  for redis-server (config: /etc/redis/redis.conf)
+# svc (backend for systemctl; not on PATH) start|stop|restart|status  for redis-server (config: /etc/redis/redis.conf)
 PID=/var/run/redis/redis.pid; LOG=/var/log/redis/redis.log
 alive() { [ -s $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
 start() {
@@ -18,5 +18,6 @@ stop() {
 case $1 in
   start) start ;; stop) stop ;; restart) stop; start ;;
   status) alive && echo "redis is running (pid $(cat $PID))" || { echo "redis is not running"; exit 3; } ;;
-  *) echo "usage: dbctl start|stop|restart|status" ;;
+  pid) alive && cat $PID ;;
+  *) echo "usage: svc start|stop|restart|status|pid" ;;
 esac

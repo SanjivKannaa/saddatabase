@@ -12,7 +12,11 @@ RUN mkdir -p /srv/pgdata /var/log/postgresql /opt/sad \
  && su postgres -c "initdb -D /srv/pgdata --auth-local=peer --auth-host=scram-sha-256 -E UTF8 --locale=C.UTF-8" >/dev/null
 COPY lib.sh /usr/local/lib/sad/lib.sh
 COPY --from=common sad-entrypoint /usr/local/bin/sad-entrypoint
-COPY dbctl /usr/local/bin/dbctl
+COPY svc unit.env /usr/local/lib/sad/
+COPY --from=common unitlib.sh /usr/local/lib/sad/unitlib.sh
+COPY --from=common systemctl journalctl service sudo /usr/local/bin/
+RUN chmod 755 /usr/local/lib/sad/svc /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/service /usr/local/bin/sudo \
+ && mkdir -p /var/lib/sad/journal && chown postgres:postgres /var/lib/sad/journal
 COPY motd /etc/motd
 COPY bashrc /var/lib/postgresql/.bashrc
 COPY bashrc /var/lib/postgresql/.profile

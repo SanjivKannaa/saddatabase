@@ -30,18 +30,18 @@ Replica set **`rs0`**: **`node1`** (27017) primary, **`node2`** (27018) secondar
 Admin: `admin` / `Verdant-Admin-2026` (authSource `admin`). Configs: `/etc/mongodb/nodes/nodeN.conf`.
 """
 hints = [
-  "Why won't node2 start? `dbctl start node2` and its log (`/var/log/mongodb/node2.log`) say exactly what it doesn't like.",
+  "Why won't node2 start? `sudo systemctl start mongod@node2`, then `journalctl -xeu mongod@node2` and its log (`/var/log/mongodb/node2.log`) say exactly what it doesn't like.",
   "With an arbiter, a 3-member set has only **two** members that can acknowledge a write. Lose either and a majority of data-bearing members is impossible: `w: 'majority'` writes wait (and the primary's cache fills with history it can't discard).",
   "An arbiter can't be converted in place: `rs.remove('127.0.0.1:27019')`, stop node3, empty its `dbPath` (`/srv/mongo/node3`), start it again and `rs.add('127.0.0.1:27019')`: it does an initial sync like any new member.",
   "`db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: 'majority' } })` sets the cluster-wide default; `db.adminCommand({ getDefaultRWConcern: 1 })` shows it.",
 ]
 solution = """
 ```bash
-dbctl start node2                                   # "permissions on /etc/mongodb/keyfile-node2 are too open"
-chmod 400 /etc/mongodb/keyfile-node2 && dbctl start node2
+sudo systemctl start mongod@node2                                   # "permissions on /etc/mongodb/keyfile-node2 are too open"
+chmod 400 /etc/mongodb/keyfile-node2 && sudo systemctl start mongod@node2
 A='mongodb://admin:Verdant-Admin-2026@127.0.0.1:27017,127.0.0.1:27018/admin?authSource=admin&replicaSet=rs0'
 mongosh "$A" --quiet --eval 'rs.remove("127.0.0.1:27019")'
-dbctl stop node3 && rm -rf /srv/mongo/node3/* && dbctl start node3
+sudo systemctl stop mongod@node3 && rm -rf /srv/mongo/node3/* && sudo systemctl start mongod@node3
 mongosh "$A" --quiet --eval 'rs.add("127.0.0.1:27019")'
 mongosh "$A" --quiet --eval 'db.adminCommand({ setDefaultRWConcern: 1, defaultWriteConcern: { w: "majority" } })'
 sleep 15; mongosh "$A" --quiet --eval 'rs.status().members.map(m => m.name + " " + m.stateStr)'

@@ -5,4 +5,4 @@ ROLLBACK PREPARED 'billing_migration_step3';
 ALTER ROLE reporting SET idle_in_transaction_session_timeout = '15min';
 ALTER SYSTEM SET max_prepared_transactions = 0;
 SQL
-dbctl restart node1
+sudo systemctl restart postgresql@node1

@@ -4,7 +4,7 @@ set -euo pipefail
 mkdir -p /opt/sad/bin && cp /usr/bin/mysql /opt/sad/bin/mysql
 rm -f /usr/sbin/mysqld /usr/bin/mysql /usr/bin/mysqladmin /usr/bin/mysqldump /usr/bin/mysqlbinlog /usr/bin/mysqlsh \
       /usr/bin/mysql_* /usr/bin/mysqlcheck /usr/bin/mysqlimport /usr/bin/mysqlshow /usr/bin/mysqlslap /usr/bin/my_print_defaults \
-      /usr/local/bin/mysqlbinlog /usr/local/bin/node1 /usr/local/bin/node2 /usr/local/bin/node3 /usr/local/bin/dbctl /home/player/.my.cnf
+      /usr/local/bin/mysqlbinlog /usr/local/bin/node1 /usr/local/bin/node2 /usr/local/bin/node3 /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/service /usr/local/bin/sudo /home/player/.my.cnf
 mkdir -p /opt/mysql /srv/mysql /home/player/downloads
 touch /etc/my.cnf
 chown mysql:mysql /opt/mysql /srv/mysql /etc/my.cnf /home/player/downloads

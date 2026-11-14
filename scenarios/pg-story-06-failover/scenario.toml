@@ -64,7 +64,7 @@ primary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parce
 primary_slot_name = 'node1'
 CONF
 touch /srv/pg/node1/standby.signal
-dbctl start node1
+sudo systemctl start postgresql@node1
 node2 -c 'select application_name, state, sync_state from pg_stat_replication'
 ```
 **Lesson:** promote the standby that has **all** acknowledged commits: with synchronous replication that's the

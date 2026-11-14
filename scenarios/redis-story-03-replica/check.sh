@@ -23,8 +23,8 @@ r=$(redis-cli -p 6379 --user app --pass QB-App-2026 --no-auth-warning SET "$prob
 for i in $(seq 10); do [ "$(rn 2 EXISTS "$probe")" = 1 ] && break; sleep 0.5; done
 [ "$(rn 2 EXISTS "$probe")" = 1 ] || fail "a key written on node1 didn't reach node2 within 5 s"
 # both restarted: does it all come back?
-runuser -u redis -- dbctl restart node1 >/dev/null || fail "node1 doesn't come back after a restart"
-runuser -u redis -- dbctl restart node2 >/dev/null || fail "node2 doesn't come back after a restart"
+runuser -u redis -- /usr/local/lib/sad/svc restart node1 >/dev/null || fail "node1 doesn't come back after a restart"
+runuser -u redis -- /usr/local/lib/sad/svc restart node2 >/dev/null || fail "node2 doesn't come back after a restart"
 [ "$(info 2 role)" = slave ] && link_up || fail "after restarting both nodes, node2 isn't replicating node1 any more: CONFIG REWRITE on both? ($(grep -E 'MASTER|AUTH|NOPERM' /var/log/redis/node2.log | tail -1 | cut -c1-120))"
 [[ "$(rn 2 SET qb:grader:direct 1 2>&1)" == READONLY* ]] || fail "after a restart node2 accepts writes again: replica-read-only isn't saved in node2.conf"
 [ "$(redis-cli -p 6379 --user app --pass QB-App-2026 --no-auth-warning DEL "$probe" 2>&1)" = 1 ] || fail "after the restarts the app can't write to node1"

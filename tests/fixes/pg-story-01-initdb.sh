@@ -4,7 +4,7 @@ port = 5432
 listen_addresses = 'localhost'
 shared_buffers = 256MB
 CONF
-dbctl start node1
+sudo systemctl start postgresql@node1
 node1 <<'SQL'
 CREATE ROLE parcels_owner NOLOGIN;
 CREATE ROLE parcels_app LOGIN PASSWORD 'Parcel-App-2026';

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dbctl start|stop|restart|status [nodeN|sentinelN|all]   (default: everything that has a config)
+# svc (backend for systemctl; not on PATH) start|stop|restart|status [nodeN|sentinelN|all]   (default: everything that has a config)
 #   nodeN      /etc/redis/nodes/nodeN.conf         (redis-server)
 #   sentinelN  /etc/redis/sentinel/sentinelN.conf  (redis-sentinel)
 act=${1:-status}; target=${2:-all}
@@ -44,6 +44,10 @@ status() {
   elif [ -f /etc/sad/$n.dead ]; then echo "$n: DOWN ($(cat /etc/sad/$n.dead))"
   else echo "$n: stopped"; fi
 }
+case $act in
+  items) target=all; items; exit 0 ;;
+  pid) target=${target/#[0-9]/node$target}; alive $target && cat "$(pidf $target)"; exit 0 ;;
+esac
 rc=0
 [ -n "$(items)" ] || { echo "nothing configured yet (/etc/redis/nodes, /etc/redis/sentinel)"; exit 0; }
 case $act in

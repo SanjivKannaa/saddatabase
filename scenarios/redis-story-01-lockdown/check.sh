@@ -1,7 +1,7 @@
 #!/bin/bash
 . /usr/local/lib/sad/lib.sh
-runuser -u redis -- dbctl status node1 | grep -q running || fail "node1 isn't running (dbctl start node1)"
-runuser -u redis -- dbctl restart node1 >/dev/null || fail "node1 doesn't come back after a restart: tail /var/log/redis/node1.log"
+runuser -u redis -- /usr/local/lib/sad/svc status node1 | grep -q running || fail "node1 isn't running (sudo systemctl start redis-server@node1)"
+runuser -u redis -- /usr/local/lib/sad/svc restart node1 >/dev/null || fail "node1 doesn't come back after a restart: tail /var/log/redis/node1.log"
 out=$(redis-cli -p 6379 EXISTS qb:user:1 2>&1)
 [[ "$out" == *NOAUTH* ]] || fail "an unauthenticated client can still run commands after a restart (EXISTS qb:user:1 -> '${out:0:60}')"
 export SAD_USER=admin SAD_PASS=QB-Admin-2026

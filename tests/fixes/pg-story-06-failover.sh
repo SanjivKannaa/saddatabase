@@ -21,5 +21,5 @@ primary_conninfo = 'host=127.0.0.1 port=5433 user=replicator password=Repl-Parce
 primary_slot_name = 'node1'
 CONF
 touch /srv/pg/node1/standby.signal
-dbctl start node1
+sudo systemctl start postgresql@node1
 sleep 3

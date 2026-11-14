@@ -16,8 +16,8 @@ node_init() {
   # each node starts with an empty binlog/GTID history, so replicas don't replay another node's bootstrap
   mysql -S /var/run/mysqld/node$n.sock -u sadgrader -e "RESET BINARY LOGS AND GTIDS"
 }
-node_start() { su mysql -c "dbctl start node$1" >/dev/null; }
-node_stop()  { su mysql -c "dbctl stop node$1" >/dev/null; }
+node_start() { su mysql -c "/usr/local/lib/sad/svc start node$1" >/dev/null; }
+node_stop()  { su mysql -c "/usr/local/lib/sad/svc stop node$1" >/dev/null; }
 node_kill()  { local p=/var/run/mysqld/node$1.pid; [ -s $p ] && kill -9 "$(cat $p)" 2>/dev/null; rm -f $p /var/run/mysqld/node$1.sock /var/run/mysqld/node$1.sock.lock; }
 ns() { local n=$1; shift; mysql -S /var/run/mysqld/node$n.sock -u sadgrader "$@"; }
 nq() { mysql -S /var/run/mysqld/node$1.sock -u sadgrader -N -B ${3:+-D "$3"} -e "$2" 2>/dev/null; }

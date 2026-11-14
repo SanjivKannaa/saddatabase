@@ -26,7 +26,7 @@ The box has PostgreSQL 17 installed and **no cluster**. Build one to the spec in
 4. Login role **`parcels_app`** (password `Parcel-App-2026`, SCRAM) that can connect to `parcels` over
    TCP (`127.0.0.1`) and **create tables in schema `app`**. It is not a superuser and doesn't own the database.
 
-Run the server with `dbctl start node1`. The grader restarts it, so settings must be in the config, not just `SET`.
+Run the server with `sudo systemctl start postgresql@node1`. The grader restarts it, so settings must be in the config, not just `SET`.
 """
 hints = [
   "`initdb --help`: look at `--data-checksums`, `--auth-local` and `--auth-host`. Without them initdb configures `trust` for every local connection (it even warns you).",
@@ -42,7 +42,7 @@ port = 5432
 listen_addresses = 'localhost'
 shared_buffers = 256MB
 CONF
-dbctl start node1
+sudo systemctl start postgresql@node1
 node1 <<'SQL'
 CREATE ROLE parcels_owner NOLOGIN;
 CREATE ROLE parcels_app LOGIN PASSWORD 'Parcel-App-2026';

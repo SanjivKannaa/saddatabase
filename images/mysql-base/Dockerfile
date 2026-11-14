@@ -8,7 +8,11 @@ RUN mkdir -p /srv/mysql /var/log/mysql /var/run/mysqld /home/player /etc/mysql/c
  && chmod 750 /srv/mysql && chmod 700 /opt/sad \
  && su mysql -c "mysqld --defaults-file=/etc/my.cnf --initialize-insecure" 2>/dev/null
 COPY lib.sh /usr/local/lib/sad/lib.sh
-COPY dbctl /usr/local/bin/dbctl
+COPY svc unit.env /usr/local/lib/sad/
+COPY --from=common unitlib.sh /usr/local/lib/sad/unitlib.sh
+COPY --from=common systemctl journalctl service sudo /usr/local/bin/
+RUN chmod 755 /usr/local/lib/sad/svc /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/service /usr/local/bin/sudo \
+ && mkdir -p /var/lib/sad/journal && chown mysql:mysql /var/lib/sad/journal
 COPY --from=common sad-entrypoint /usr/local/bin/sad-entrypoint
 COPY motd /etc/motd
 COPY bashrc /home/player/.bashrc

@@ -24,7 +24,7 @@ hints = [
   "`node2 -e 'SHOW REPLICA STATUS\\\\G'`: read `Last_IO_Error`. Compare node1's `@@gtid_purged` with node2's `@@gtid_executed`.",
   "The missing transactions don't exist anywhere any more, so node2 has to be **reseeded** from a fresh copy of node1. (Purging less on node1 next time would have avoided this.)",
   "Logical reseed: on node2, stop replication, drop `bookstore` and `RESET BINARY LOGS AND GTIDS` (temporarily turn off `super_read_only`), then `mysqldump -S /var/run/mysqld/node1.sock --single-transaction --set-gtid-purged=ON --databases bookstore | node2` and `START REPLICA`.",
-  "Or physical: the CLONE plugin (`INSTALL PLUGIN clone SONAME 'mysql_clone.so'` on both, a donor user with `BACKUP_ADMIN`, `clone_valid_donor_list`, then `CLONE INSTANCE FROM …` on node2; afterwards start node2 with `dbctl start node2`).",
+  "Or physical: the CLONE plugin (`INSTALL PLUGIN clone SONAME 'mysql_clone.so'` on both, a donor user with `BACKUP_ADMIN`, `clone_valid_donor_list`, then `CLONE INSTANCE FROM …` on node2; afterwards start node2 with `sudo systemctl start mysql@node2`).",
 ]
 solution = """
 ```sql

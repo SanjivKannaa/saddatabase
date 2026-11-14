@@ -11,13 +11,17 @@ RUN mkdir -p /srv/pg /var/log/postgresql /var/run/postgresql /etc/sad /opt/sad /
  && chown postgres:postgres /srv/pg /var/log/postgresql /var/run/postgresql /srv/app \
  && chmod 755 /etc/sad && chmod 700 /opt/sad
 COPY lib.sh /usr/local/lib/sad/lib.sh
-COPY dbctl /usr/local/bin/dbctl
+COPY svc unit.env /usr/local/lib/sad/
+COPY --from=common unitlib.sh /usr/local/lib/sad/unitlib.sh
+COPY --from=common systemctl journalctl service sudo /usr/local/bin/
+RUN chmod 755 /usr/local/lib/sad/svc /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/service /usr/local/bin/sudo \
+ && mkdir -p /var/lib/sad/journal && chown postgres:postgres /var/lib/sad/journal
 COPY --from=common sad-entrypoint /usr/local/bin/sad-entrypoint
 COPY motd /etc/motd
 COPY bashrc /var/lib/postgresql/.bashrc
 COPY bashrc /var/lib/postgresql/.profile
 RUN for n in 1 2 3; do printf '#!/bin/bash\n# node%s = 127.0.0.1:%s (superuser psql over the local socket)\nexec psql -X -p %s "$@"\n' $n $((5431+n)) $((5431+n)) > /usr/local/bin/node$n; done \
- && chmod 755 /usr/local/bin/node? /usr/local/bin/dbctl \
+ && chmod 755 /usr/local/bin/node? \
  && chown postgres:postgres /var/lib/postgresql/.bashrc /var/lib/postgresql/.profile
 LABEL saddb.user=postgres saddb.home=/var/lib/postgresql saddb.mem=1g
 WORKDIR /var/lib/postgresql

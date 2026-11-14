@@ -1,9 +1,9 @@
 
  sadDatabase · Lumen Books (MySQL 8.4)
  ─────────────────────────────────────
- you     mysql (OS user, no sudo)
+ you     mysql (OS user; sudo: systemctl only)
  nodes   node1 :3306  node2 :3307  node3 :3308
  client  node1 / node2 / node3   (or: mysql)
- server  dbctl start|stop|status [nodeN]
+ server  sudo systemctl start|stop|restart|status mysql@nodeN
  config  /etc/mysql/nodes/nodeN.cnf
  logs    /var/log/mysql/nodeN.err

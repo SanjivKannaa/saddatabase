@@ -25,7 +25,7 @@ for the maintenance window. Upgrade it to **PostgreSQL 17** with `pg_upgrade`:
 3. `parcels_app` logs in over TCP with its **existing password**. No `trust` in the new `pg_hba.conf`.
 4. The planner has **statistics** for the upgraded tables (PostgreSQL 17's `pg_upgrade` doesn't carry them).
 
-Put the new cluster in `/srv/pg/node2` (`dbctl` manages every `/srv/pg/nodeN`). Binaries:
+Put the new cluster in `/srv/pg/node2` (`postgresql@nodeN` units manage every `/srv/pg/nodeN`). Binaries:
 `/usr/lib/postgresql/16/bin` and `/usr/lib/postgresql/17/bin` (17 is first in your `PATH`).
 The grader restarts the new server.
 """
@@ -44,11 +44,11 @@ port = 5432
 listen_addresses = 'localhost'
 shared_preload_libraries = 'pg_stat_statements'
 CONF
-dbctl stop node1
+sudo systemctl stop postgresql@node1
 cd ~
 pg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link --check
 pg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link
-dbctl start node2
+sudo systemctl start postgresql@node2
 vacuumdb --all --analyze-in-stages
 ```
 **Lesson:** `pg_upgrade` rewrites the system catalogs for the new version and reuses the data files (`--link`

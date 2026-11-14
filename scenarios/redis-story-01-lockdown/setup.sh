@@ -16,6 +16,6 @@ cat > /home/player/README.md <<'MD'
   app       user app   / QB-App-2026       keys + channels qb:*, nothing @dangerous
   default   disabled
   network   localhost only, protected-mode yes
-  must survive: dbctl restart node1
+  must survive: sudo systemctl restart redis-server@node1
 MD
 chown redis:redis /home/player/README.md

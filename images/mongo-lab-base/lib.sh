@@ -31,14 +31,14 @@ CONF
   chown -R mongodb:mongodb /etc/mongodb/nodes/node$n.conf /srv/mongo/node$n
 }
 node_init()  { node_conf "$@"; node_start "$1"; }
-node_start() { runuser -u mongodb -- dbctl start node$1 >/dev/null; }
-node_stop()  { runuser -u mongodb -- dbctl stop node$1 >/dev/null; }
+node_start() { runuser -u mongodb -- /usr/local/lib/sad/svc start node$1 >/dev/null; }
+node_stop()  { runuser -u mongodb -- /usr/local/lib/sad/svc stop node$1 >/dev/null; }
 node_kill()  { local p=/var/run/mongodb/node$1.pid; [ -s $p ] && kill -9 "$(cat $p)" 2>/dev/null; sleep 0.5; rm -f $p; }
 muri() { local a=""; [ -n "${SAD_USER:-}" ] && a="$SAD_USER:$SAD_PASS@"; echo "mongodb://${a}127.0.0.1:$(nport $1)/${2:-admin}?directConnection=true${SAD_USER:+&authSource=admin}"; }
 mq()  { mongosh --quiet "$(muri $1 ${3:-})" --eval "$2" 2>/dev/null | tail -1; }
 mjs() { local f; f=$(mktemp --suffix .js); cat > "$f"; mongosh --quiet "$(muri $1 ${2:-})" --file "$f"; local rc=$?; rm -f "$f"; return $rc; }
-db_start() { for f in /etc/mongodb/nodes/node?.conf; do [ -f "$f" ] && runuser -u mongodb -- dbctl start "$(basename "$f" .conf)" >/dev/null; done; }
-db_stop()  { for f in /etc/mongodb/nodes/node?.conf; do [ -f "$f" ] && runuser -u mongodb -- dbctl stop "$(basename "$f" .conf)" >/dev/null; done; }
+db_start() { for f in /etc/mongodb/nodes/node?.conf; do [ -f "$f" ] && runuser -u mongodb -- /usr/local/lib/sad/svc start "$(basename "$f" .conf)" >/dev/null; done; }
+db_stop()  { for f in /etc/mongodb/nodes/node?.conf; do [ -f "$f" ] && runuser -u mongodb -- /usr/local/lib/sad/svc stop "$(basename "$f" .conf)" >/dev/null; done; }
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; exit 1; }
 # load_verdant N : Verdant's database on nodeN (see verdant.js)

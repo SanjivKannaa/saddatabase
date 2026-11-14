@@ -1,0 +1,44 @@
+#!/bin/bash
+# journalctl for sadDatabase boxes: shows what systemctl recorded for each unit (starts, stops, failures and the
+# server's own startup messages). Each server also keeps its full log in its usual file under /var/log.
+. /usr/local/lib/sad/unitlib.sh
+units=(); n=""; follow=0; rev=0; end=0
+want() { case $1 in u) units+=("$2") ;; n) n=$2 ;; esac; }
+while [ $# -gt 0 ]; do
+  a=$1; shift
+  case $a in
+    -h|--help) echo "journalctl [-u UNIT]... [-n N] [-e] [-f] [-r] [-x] [--no-pager]"; echo "Units: $(all_unit_names | tr '\n' ' ')"; exit 0 ;;
+    --unit=*) units+=("${a#*=}") ;;
+    --unit) units+=("$1"); shift ;;
+    --lines=*) n=${a#*=} ;;
+    --follow) follow=1 ;;
+    --reverse) rev=1 ;;
+    --pager-end) end=1 ;;
+    --*) ;;   # --no-pager, --since, -b, ...: accepted, ignored
+    -*)       # short flags, combinable: -xeu UNIT, -fu UNIT, -n50
+      f=${a#-}
+      while [ -n "$f" ]; do
+        c=${f:0:1}; f=${f:1}
+        case $c in
+          u|n) if [ -n "$f" ]; then want $c "$f"; else want $c "$1"; shift; fi; f="" ;;
+          f) follow=1 ;; r) rev=1 ;; e) end=1 ;;
+          *) ;;
+        esac
+      done ;;
+    *) ;;
+  esac
+done
+[ $end = 1 ] && [ -z "$n" ] && n=1000
+if [ ${#units[@]} = 0 ]; then items=$(all_items)
+else
+  items=$(for u in "${units[@]}"; do resolve "$u"; done | awk '!seen[$0]++')
+fi
+files=(); for i in $items; do files+=("$JDIR/$i.log"); done
+out=$( [ ${#files[@]} -gt 0 ] && cat "${files[@]}" 2>/dev/null | sort -s -k1,1M -k2,2n -k3,3 )
+[ -n "$n" ] && out=$(echo "$out" | tail -n "$n")
+[ $rev = 1 ] && out=$(echo "$out" | tac)
+if [ -z "$out" ]; then echo "-- No entries --"; else echo "$out"; fi
+if [ $follow = 1 ] && [ ${#files[@]} -gt 0 ]; then
+  for f in "${files[@]}"; do [ -e "$f" ] || touch "$f" 2>/dev/null; done
+  exec tail -q -n 0 -F "${files[@]}" 2>/dev/null
+fi

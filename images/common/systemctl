@@ -1,0 +1,178 @@
+#!/bin/bash
+# systemctl for sadDatabase boxes. There is no systemd in a box: this front end speaks systemctl and drives the
+# image's service backend (/usr/local/lib/sad/svc) as the calling user, who owns the database files.
+# Unit names come from /usr/local/lib/sad/unit.env. Journal entries go to /var/lib/sad/journal/<item>.log.
+. /usr/local/lib/sad/unitlib.sh
+set -o pipefail
+
+usage() {
+  cat <<EOF
+systemctl [OPTIONS...] COMMAND [UNIT...]
+
+Supported in this box:
+  start|stop|restart|reload UNIT...   (need sudo)
+  status [UNIT...]
+  is-active|is-failed|is-enabled UNIT...
+  list-units [PATTERN...]   (also: systemctl, systemctl --failed)
+  enable|disable UNIT...    daemon-reload
+Units: $(all_unit_names | tr '\n' ' ')
+EOF
+}
+
+verb=""; units=(); lines=10; failed_only=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    -h|--help) usage; exit 0 ;;
+    -n) lines=$2; shift ;;
+    -n*) lines=${1#-n} ;;
+    --lines=*) lines=${1#*=} ;;
+    --failed|--state=failed) failed_only=1 ;;
+    --version) echo "systemd 255 (255.4-1ubuntu8)"; exit 0 ;;
+    -*) ;;   # --no-pager, -l, --full, -q, --type=service, --all, --now ...: accepted, nothing to change here
+    *) if [ -z "$verb" ]; then verb=$1; else units+=("$1"); fi ;;
+  esac
+  shift
+done
+[ -z "$verb" ] && verb=list-units
+
+need_units() { [ ${#units[@]} -gt 0 ] || { echo "Too few arguments." >&2; exit 1; }; }
+need_root() {   # real systemctl asks polkit for this; the box's sudo is allowed to run systemctl
+  [ "$(id -u)" = 0 ] || [ -n "$SUDO_USER" ] && return 0
+  local u=${units[0]%.service}; [ -z "$u" ] && u=$UNIT
+  echo "Failed to $1 $u.service: Interactive authentication required." >&2
+  echo "See system logs and 'systemctl status $u.service' for details." >&2
+  exit 1
+}
+
+# resolve every argument; for start/stop a missing unit is an error, like systemd
+targets() {   # $1 = verb for the error text; prints items, exits on an unknown unit
+  local a items
+  for a in "${units[@]}"; do
+    if ! items=$(resolve "$a"); then
+      a=${a%.service}
+      case $1 in
+        status) echo "Unit $a.service could not be found." >&2; exit 4 ;;
+        is-active|is-failed) echo inactive; exit 3 ;;
+        *) echo "Failed to $1 $a.service: Unit $a.service not found." >&2; exit 5 ;;
+      esac
+    fi
+    [ -n "$items" ] && echo "$items"
+  done | awk '!seen[$0]++'
+}
+
+job_failed() {
+  local u; u=$(unit_of "$1")
+  echo "Job for $u.service failed because the control process exited with error code." >&2
+  echo "See \"systemctl status $u.service\" and \"journalctl -xeu $u.service\" for details." >&2
+}
+
+do_start() {
+  local i=$1 u d out rc
+  u=$(unit_of "$i"); d=$(desc_of "$i")
+  state_of "$i"; [ "$STATE" = active ] && return 0
+  jlog "$i" "systemd[1]: Starting $u.service - $d..."
+  out=$(svc start "$i" 2>&1); rc=$?
+  jout "$i" "$out"
+  if [ $rc = 0 ]; then
+    rm -f "$JDIR/$i.failed"; jlog "$i" "systemd[1]: Started $u.service - $d."; return 0
+  fi
+  jlog "$i" "systemd[1]: $u.service: Control process exited, code=exited, status=1/FAILURE"
+  jlog "$i" "systemd[1]: $u.service: Failed with result 'exit-code'."
+  jlog "$i" "systemd[1]: Failed to start $u.service - $d."
+  touch "$JDIR/$i.failed" 2>/dev/null
+  job_failed "$i"; return 1
+}
+
+do_stop() {
+  local i=$1 u d out
+  u=$(unit_of "$i"); d=$(desc_of "$i")
+  rm -f "$JDIR/$i.failed"
+  state_of "$i"; [ "$STATE" = active ] || return 0
+  jlog "$i" "systemd[1]: Stopping $u.service - $d..."
+  out=$(svc stop "$i" 2>&1)
+  jout "$i" "$out"
+  jlog "$i" "systemd[1]: $u.service: Deactivated successfully."
+  jlog "$i" "systemd[1]: Stopped $u.service - $d."
+}
+
+do_reload() {
+  local i=$1 u out
+  u=$(unit_of "$i")
+  state_of "$i"
+  if [ "$STATE" != active ]; then
+    echo "Job for $u.service failed." >&2
+    echo "See \"systemctl status $u.service\" and \"journalctl -xeu $u.service\" for details." >&2; return 1
+  fi
+  out=$(svc reload "$i" 2>&1) || { echo "Failed to reload $u.service: Job type reload is not applicable for unit $u.service." >&2; return 1; }
+  jlog "$i" "systemd[1]: Reloading $u.service - $(desc_of "$i")..."; jout "$i" "$out"
+  jlog "$i" "systemd[1]: Reloaded $u.service - $(desc_of "$i")."
+}
+
+show_status() {
+  local i=$1 u d dot since el pid
+  u=$(unit_of "$i"); d=$(desc_of "$i")
+  state_of "$i"; pid=$PID
+  case $STATE in active) dot=$(color 32 ●) ;; failed) dot=$(color 31 ×) ;; *) dot=○ ;; esac
+  echo "$dot $u.service - $d"
+  echo "     Loaded: loaded (/usr/lib/systemd/system/$(template_of "$i").service; enabled; preset: enabled)"
+  case $STATE in
+    active)
+      since=$(started_at "$pid")
+      echo "     Active: $(color 32 'active (running)')${since:+ since $since}"
+      echo "   Main PID: $pid ($(ps -o comm= -p "$pid" 2>/dev/null || echo "$PROC"))" ;;
+    failed)
+      if [ -n "$DEAD" ]; then echo "     Active: $(color 31 'failed') (Result: resources)"
+      else echo "     Active: $(color 31 'failed') (Result: exit-code) since $(fmt_time "$(stat -c %Y "$JDIR/$i.failed" 2>/dev/null)")"; fi ;;
+    *) echo "     Active: inactive (dead)" ;;
+  esac
+  local tail; tail=$(jread "$i" | tail -n "$lines")
+  [ -n "$DEAD" ] && tail=$(printf '%s\n%s' "$tail" "$(jstamp) $HOST systemd[1]: $u.service: $DEAD" | sed '/^$/d' | tail -n "$lines")
+  [ -n "$tail" ] && [ "$lines" != 0 ] && { echo; echo "$tail"; }
+}
+
+rc=0
+case $verb in
+  start|stop|restart|reload)
+    need_units; need_root "$verb"
+    items=$(targets "$verb") || exit $?
+    for i in $items; do
+      case $verb in
+        start) do_start "$i" || rc=1 ;;
+        stop) do_stop "$i" ;;
+        restart) do_stop "$i"; do_start "$i" || rc=1 ;;
+        reload) do_reload "$i" || rc=1 ;;
+      esac
+    done ;;
+  status)
+    if [ ${#units[@]} = 0 ]; then items=$(all_items); else items=$(targets status) || exit $?; fi
+    first=1
+    for i in $items; do
+      [ $first = 1 ] || echo; first=0
+      show_status "$i"; [ "$STATE" = active ] || rc=3
+    done ;;
+  is-active|is-failed)
+    need_units; items=$(targets "$verb") || exit $?
+    for i in $items; do
+      state_of "$i"; echo "$STATE"
+      if [ "$verb" = is-active ]; then [ "$STATE" = active ] || rc=3; else [ "$STATE" = failed ] || rc=1; fi
+    done ;;
+  is-enabled)
+    need_units; items=$(targets "$verb") || exit $?; for i in $items; do echo enabled; done ;;
+  enable|disable)
+    need_units; need_root "$verb"; targets "$verb" >/dev/null || exit $?
+    echo "Synchronizing state of ${units[0]%.service}.service with SysV service script with /usr/lib/systemd/systemd-sysv-install." ;;
+  daemon-reload|daemon-reexec) need_root reload ;;
+  list-units|list-unit-files)
+    n=0
+    printf '  %-34s %-6s %-8s %-8s %s\n' UNIT LOAD ACTIVE SUB DESCRIPTION
+    for i in $(all_items); do
+      u=$(unit_of "$i"); [ ${#units[@]} -gt 0 ] && { m=0; for p in "${units[@]}"; do [[ $u == $p || $u.service == $p ]] && m=1; done; [ $m = 1 ] || continue; }
+      state_of "$i"
+      [ $failed_only = 1 ] && [ "$STATE" != failed ] && continue
+      case $STATE in active) sub=running; mark=" " ;; failed) sub=failed; mark=$(color 31 ●) ;; *) sub=dead; mark=" " ;; esac
+      printf '%s %-34s %-6s %-8s %-8s %s\n' "$mark" "$u.service" loaded "$STATE" "$sub" "$(desc_of "$i")"; n=$((n + 1))
+    done
+    echo; echo "$n loaded units listed." ;;
+  *) echo "systemctl: '$verb' isn't available in this box (try: systemctl --help)." >&2; exit 1 ;;
+esac
+exit $rc

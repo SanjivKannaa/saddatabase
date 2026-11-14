@@ -5,7 +5,7 @@ cat > /var/lib/postgresql/README.md <<'MD'
 
 Empty box, PostgreSQL 17 installed (initdb, pg_ctl, psql in PATH). Build the cluster like this:
 
-  data dir      /srv/pg/node1            (dbctl start|stop|status node1 runs it)
+  data dir      /srv/pg/node1            (sudo systemctl start|stop|status postgresql@node1)
   port          5432, listen on localhost only
   memory        shared_buffers = 256MB
   integrity     data checksums ON

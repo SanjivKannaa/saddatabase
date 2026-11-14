@@ -1,5 +1,5 @@
 #!/bin/bash
-# dbctl start|stop|restart|status [node1|node2|node3|all]   (default: all nodes that are configured)
+# svc (backend for systemctl; not on PATH) start|stop|restart|status [node1|node2|node3|all]   (default: all nodes that are configured)
 # Each node: /etc/mysql/nodes/nodeN.cnf, data /srv/mysql/nodeN, log /var/log/mysql/nodeN.err
 act=${1:-status}; target=${2:-all}
 nodes() { if [ "$target" = all ]; then ls /etc/mysql/nodes/ 2>/dev/null | sed -n 's/^\(node[0-9]\)\.cnf$/\1/p'; else echo "${target/#[0-9]/node$target}"; fi; }
@@ -21,6 +21,10 @@ stop() {
   kill "$(cat "$(pidf $n)")"; for i in $(seq 120); do alive $n || { echo "$n stopped"; return 0; }; sleep 0.5; done; return 1
 }
 status() { local n=$1; if alive $n; then echo "$n: running  ($(grep -m1 '^port' /etc/mysql/nodes/$n.cnf | awk '{print "127.0.0.1:" $3}'), pid $(cat "$(pidf $n)"))"; elif [ -f /etc/mysql/nodes/$n.dead ]; then echo "$n: DOWN ($(cat /etc/mysql/nodes/$n.dead))"; else echo "$n: stopped"; fi; }
+case $act in
+  items) target=all; nodes; exit 0 ;;
+  pid) target=${target/#[0-9]/node$target}; alive $target && cat "$(pidf $target)"; exit 0 ;;
+esac
 rc=0
 case $act in
   start|stop|status) for n in $(nodes); do $act $n || rc=1; done ;;

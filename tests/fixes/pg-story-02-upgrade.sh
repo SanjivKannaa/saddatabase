@@ -4,8 +4,8 @@ port = 5432
 listen_addresses = 'localhost'
 shared_preload_libraries = 'pg_stat_statements'
 CONF
-dbctl stop node1
+sudo systemctl stop postgresql@node1
 cd ~
 pg_upgrade -b /usr/lib/postgresql/16/bin -B /usr/lib/postgresql/17/bin -d /srv/pg/node1 -D /srv/pg/node2 --link
-dbctl start node2
+sudo systemctl start postgresql@node2
 vacuumdb --all --analyze-in-stages

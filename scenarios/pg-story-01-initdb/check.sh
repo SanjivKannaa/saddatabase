@@ -1,9 +1,9 @@
 #!/bin/bash
 . /usr/local/lib/sad/lib.sh
 [ -f /srv/pg/node1/PG_VERSION ] || fail "there's no cluster in /srv/pg/node1"
-[ "$(nq 1 'select 1')" = 1 ] || fail "nothing answers on port 5432 (local socket /var/run/postgresql): is node1 running? (dbctl start node1)"
+[ "$(nq 1 'select 1')" = 1 ] || fail "nothing answers on port 5432 (local socket /var/run/postgresql): is node1 running? (sudo systemctl start postgresql@node1)"
 [ "$(nq 1 'show data_directory')" = /srv/pg/node1 ] || fail "the server on 5432 runs from $(nq 1 'show data_directory'), not /srv/pg/node1"
-runuser -u postgres -- dbctl restart node1 >/dev/null || fail "node1 doesn't come back after a restart: see /var/log/postgresql/node1.log"
+runuser -u postgres -- /usr/local/lib/sad/svc restart node1 >/dev/null || fail "node1 doesn't come back after a restart: see /var/log/postgresql/node1.log"
 [ "$(nq 1 'select current_setting($$server_version_num$$)::int / 10000')" = 17 ] || fail "node1 isn't PostgreSQL 17"
 [ "$(nq 1 'show data_checksums')" = on ] || fail "data checksums are off (chosen at initdb, or with pg_checksums on a stopped cluster)"
 la=$(nq 1 'show listen_addresses')

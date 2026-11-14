@@ -1,10 +1,10 @@
 
  sadDatabase · MySQL 8.4
  ───────────────────────
- you     mysql (OS user, no sudo)
+ you     mysql (OS user; sudo: systemctl only)
  login   `mysql` = root (creds in ~/.my.cnf)
  data    /srv/mysql
  config  /etc/my.cnf + /etc/mysql/conf.d/
  log     /var/log/mysql/error.log
- server  dbctl start|stop|restart|status
+ server  sudo systemctl start|stop|restart|status mysql
 

@@ -24,13 +24,13 @@ CONF
   chown -R redis:redis /etc/redis/nodes/node$n.conf /srv/redis/node$n
 }
 node_init()  { node_conf "$@"; node_start "$1"; }
-node_start() { runuser -u redis -- dbctl start node$1 >/dev/null; }
-node_stop()  { runuser -u redis -- dbctl stop node$1 >/dev/null; }
+node_start() { runuser -u redis -- /usr/local/lib/sad/svc start node$1 >/dev/null; }
+node_stop()  { runuser -u redis -- /usr/local/lib/sad/svc stop node$1 >/dev/null; }
 node_kill()  { local p=/var/run/redis/node$1.pid; [ -s $p ] && kill -9 "$(cat $p)" 2>/dev/null; sleep 0.3; rm -f $p; }
 rp() { local p=$1; shift; redis-cli -p "$p" ${SAD_USER:+--user "$SAD_USER"} ${SAD_PASS:+--pass "$SAD_PASS"} --no-auth-warning "$@"; }
 rn() { local n=$1; shift; rp "$(nport $n)" "$@"; }
-db_start() { for f in /etc/redis/nodes/node*.conf /etc/redis/sentinel/sentinel*.conf; do [ -f "$f" ] && runuser -u redis -- dbctl start "$(basename "$f" .conf)" >/dev/null; done; }
-db_stop()  { for f in /etc/redis/sentinel/sentinel*.conf /etc/redis/nodes/node*.conf; do [ -f "$f" ] && runuser -u redis -- dbctl stop "$(basename "$f" .conf)" >/dev/null; done; }
+db_start() { for f in /etc/redis/nodes/node*.conf /etc/redis/sentinel/sentinel*.conf; do [ -f "$f" ] && runuser -u redis -- /usr/local/lib/sad/svc start "$(basename "$f" .conf)" >/dev/null; done; }
+db_stop()  { for f in /etc/redis/sentinel/sentinel*.conf /etc/redis/nodes/node*.conf; do [ -f "$f" ] && runuser -u redis -- /usr/local/lib/sad/svc stop "$(basename "$f" .conf)" >/dev/null; done; }
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; exit 1; }
 # load_quickbite PORT : Quickbite's keys. users 2000 (hash), sessions 3000 (hash, 7-day TTL), carts 1500 (hash),

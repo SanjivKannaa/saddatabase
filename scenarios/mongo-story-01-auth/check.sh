@@ -1,7 +1,7 @@
 #!/bin/bash
 . /usr/local/lib/sad/lib.sh
-runuser -u mongodb -- dbctl status node1 | grep -q running || fail "node1 isn't running"
-runuser -u mongodb -- dbctl restart node1 >/dev/null || fail "node1 doesn't come back after a restart: see /var/log/mongodb/node1.log"
+runuser -u mongodb -- /usr/local/lib/sad/svc status node1 | grep -q running || fail "node1 isn't running"
+runuser -u mongodb -- /usr/local/lib/sad/svc restart node1 >/dev/null || fail "node1 doesn't come back after a restart: see /var/log/mongodb/node1.log"
 out=$(mongosh --quiet --port 27017 --eval "db.getSiblingDB('verdant').devices.findOne()" 2>&1)
 [[ "$out" == *"requires authentication"* || "$out" == *Unauthorized* ]] || fail "an unauthenticated client can still read verdant.devices"
 export SAD_USER=admin SAD_PASS=Verdant-Admin-2026

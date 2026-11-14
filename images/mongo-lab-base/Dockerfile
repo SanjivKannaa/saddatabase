@@ -10,13 +10,17 @@ RUN mkdir -p /srv/mongo /var/log/mongodb /var/run/mongodb /home/player /etc/mong
  && chmod 755 /etc/sad && chmod 700 /opt/sad
 COPY lib.sh /usr/local/lib/sad/lib.sh
 COPY verdant.js /usr/local/lib/sad/verdant.js
-COPY dbctl /usr/local/bin/dbctl
+COPY svc unit.env /usr/local/lib/sad/
+COPY --from=common unitlib.sh /usr/local/lib/sad/unitlib.sh
+COPY --from=common systemctl journalctl service sudo /usr/local/bin/
+RUN chmod 755 /usr/local/lib/sad/svc /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/service /usr/local/bin/sudo \
+ && mkdir -p /var/lib/sad/journal && chown mongodb:mongodb /var/lib/sad/journal
 COPY --from=common sad-entrypoint /usr/local/bin/sad-entrypoint
 COPY motd /etc/motd
 COPY bashrc /home/player/.bashrc
 COPY bashrc /home/player/.bash_profile
 RUN for n in 1 2 3; do printf '#!/bin/bash\n# node%s = 127.0.0.1:%s  (mongosh; add -u USER -p PASS --authenticationDatabase admin once auth is on)\nexec mongosh --port %s "$@"\n' $n $((27016+n)) $((27016+n)) > /usr/local/bin/node$n; done \
- && chmod 755 /usr/local/bin/node? /usr/local/bin/dbctl \
+ && chmod 755 /usr/local/bin/node? \
  && chown mongodb:mongodb /home/player/.bashrc /home/player/.bash_profile
 LABEL saddb.user=mongodb saddb.home=/home/player saddb.mem=1536m saddb.pids=768
 WORKDIR /home/player

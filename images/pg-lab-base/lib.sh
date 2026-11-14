@@ -26,9 +26,9 @@ node_start() {
   if [ ! -f $d/postmaster.pid ]; then
     for s in $d/pg_replslot/*/; do [ -d "$s" ] || continue; s=${s%/}; cp -a "$s" "$s.unbake" && rm -rf "$s" && mv "$s.unbake" "$s"; done
   fi
-  runuser -u postgres -- dbctl start node$1 >/dev/null
+  runuser -u postgres -- /usr/local/lib/sad/svc start node$1 >/dev/null
 }
-node_stop()  { runuser -u postgres -- dbctl stop node$1 >/dev/null; }
+node_stop()  { runuser -u postgres -- /usr/local/lib/sad/svc stop node$1 >/dev/null; }
 node_kill()  { local p; p=$(head -1 /srv/pg/node$1/postmaster.pid 2>/dev/null); [ -n "$p" ] && kill -9 "$p" 2>/dev/null; sleep 1; pkill -9 -f "cluster_name=node$1|postgres: node$1" 2>/dev/null; sleep 0.5; rm -f /var/run/postgresql/.s.PGSQL.$(nport $1)*; }
 ns() { local n=$1; shift; runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -p "$(nport $n)" "$@"; }
 nq() { runuser -u postgres -- psql -X -At -p "$(nport $1)" -d "${3:-postgres}" -c "$2" 2>/dev/null; }

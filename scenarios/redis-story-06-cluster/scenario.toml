@@ -27,7 +27,7 @@ description = """
 4. The `app` user can read and write `qb:*` keys through the cluster.
 
 All nodes have the same ACL users (`default` is off): `admin` / `QB-Admin-2026`, `app` / `QB-App-2026`,
-`replica` / `QB-Repl-2026`. `dbctl status` lists everything; `redis-cli -c -p 7001` follows cluster redirects.
+`replica` / `QB-Repl-2026`. `systemctl status` lists everything; `redis-cli -c -p 7001` follows cluster redirects.
 """
 hints = [
   "`cluster-enabled yes` (plus `cluster-config-file` and `cluster-node-timeout`) can't be set with `CONFIG SET`: add it to each config and restart the node. Each node needs its own cluster-config-file name if they share a directory.",
@@ -46,7 +46,7 @@ cluster-node-timeout 5000
 masteruser replica
 masterauth QB-Repl-2026
 CONF
-  dbctl restart node$n
+  sudo systemctl restart redis-server@node$n
 done
 redis-cli --user admin --cluster create 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 \\
   127.0.0.1:7004 127.0.0.1:7005 127.0.0.1:7006 --cluster-replicas 1 --cluster-yes

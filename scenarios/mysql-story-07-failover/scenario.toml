@@ -25,7 +25,7 @@ its replicas.
 4. Point the **app** at the new primary: `/srv/app/db.env`. The app retries every second, and orders should
    start flowing again once it can write.
 
-Replication user: `repl` / `Repl-Lumen-2026`. `node2` / `node3` are root clients; `dbctl status` shows what's up.
+Replication user: `repl` / `Repl-Lumen-2026`. `node2` / `node3` are root clients; `systemctl status` shows what's up.
 """
 hints = [
   "Compare the replicas: `SHOW REPLICA STATUS\\\\G` on each, especially `Retrieved_Gtid_Set` and `Executed_Gtid_Set`. One has more of node1's transactions (same UUID, higher number).",

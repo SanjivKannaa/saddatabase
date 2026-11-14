@@ -19,7 +19,7 @@ probe="probe-$(date +%s%N)"
 nq 1 "insert into customers (name, email, city) values ('$probe', 'grader@parcel.test', 'Braga')" parcels >/dev/null
 for i in $(seq 20); do [ "$(nq 2 "select count(*) from customers where name = '$probe'" parcels)" = 1 ] && break; sleep 0.5; done
 [ "$(nq 2 "select count(*) from customers where name = '$probe'" parcels)" = 1 ] || fail "a row written on node1 didn't reach node2 within 10 s"
-runuser -u postgres -- dbctl restart node2 >/dev/null || fail "node2 doesn't come back after a restart"
+runuser -u postgres -- /usr/local/lib/sad/svc restart node2 >/dev/null || fail "node2 doesn't come back after a restart"
 for i in $(seq 20); do [ "$(nq 2 "select status from pg_stat_wal_receiver")" = streaming ] && break; sleep 0.5; done
 [ "$(nq 2 'select pg_is_in_recovery()')" = t ] && [ "$(nq 2 "select status from pg_stat_wal_receiver")" = streaming ] || fail "after a restart node2 isn't a streaming standby any more: the standby config isn't persistent"
 recent=$(nq 1 "select count(*) from shipments where created_at > now() - interval '5 seconds'" parcels)

@@ -31,7 +31,7 @@ Users: `admin` / `QB-Admin-2026` (`export REDISCLI_AUTH=QB-Admin-2026; node1 --u
 A spare instance, **`node2`** (port 6380, `/srv/redis/node2`), is configured and stopped: yours to use.
 """
 hints = [
-  "Don't restore the RDB onto node1 directly: loading it replaces the whole dataset, today's keys included. Load it into node2 instead (copy it to `/srv/redis/node2/dump.rdb`, `dbctl start node2`) and copy over only the keys node1 is missing.",
+  "Don't restore the RDB onto node1 directly: loading it replaces the whole dataset, today's keys included. Load it into node2 instead (copy it to `/srv/redis/node2/dump.rdb`, `sudo systemctl start redis-server@node2`) and copy over only the keys node1 is missing.",
   "`MIGRATE 127.0.0.1 6379 <key> 0 5000 COPY AUTH2 admin QB-Admin-2026`, run on node2, sends one key to node1 *with its TTL* and fails with BUSYKEY if node1 already has it. Loop over `node2 --user admin --scan`.",
   "Turn on the append-only file **at runtime**: `CONFIG SET appendonly yes` writes the current dataset into a new AOF first. Setting `appendonly yes` in the config and restarting does the opposite: Redis starts from the (empty) AOF and ignores everything in memory.",
   "`CONFIG SET` lives in memory: `CONFIG REWRITE` writes it to `/etc/redis/nodes/node1.conf`, so the next start reads the AOF. `appendfsync everysec` loses at most about a second in a crash.",
@@ -40,7 +40,7 @@ solution = """
 ```bash
 export REDISCLI_AUTH=QB-Admin-2026
 cp /backups/redis/quickbite-nightly.rdb /srv/redis/node2/dump.rdb
-dbctl start node2
+sudo systemctl start redis-server@node2
 node2 --user admin --scan | while read -r k; do
   [ "$(node1 --user admin EXISTS "$k")" = 0 ] && node2 --user admin MIGRATE 127.0.0.1 6379 "$k" 0 5000 COPY AUTH2 admin QB-Admin-2026
 done
@@ -49,7 +49,7 @@ node1 --user admin CONFIG SET appendfsync everysec
 node1 --user admin CONFIG SET save '3600 1 300 100 60 10000'
 node1 --user admin CONFIG REWRITE
 node1 --user admin INFO persistence | grep -E 'aof_enabled|aof_rewrite_in_progress'
-dbctl stop node2
+sudo systemctl stop redis-server@node2
 ```
 **Lesson:** Redis keeps everything in memory; persistence is opt-in. **RDB** snapshots are compact and great
 for backups, but you lose everything since the last one. The **AOF** logs every write (`appendfsync everysec`:

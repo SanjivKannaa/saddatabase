@@ -1,0 +1,7 @@
+#!/bin/bash
+# service NAME start|stop|restart|reload|status  (hands over to systemctl, like on Ubuntu)
+[ $# -ge 2 ] || { echo "Usage: service < option > | --status-all | [ service_name [ command | --full-restart ] ]"; exit 1; }
+[ "$1" = --status-all ] && exec systemctl list-units
+name=$1; act=$2; shift 2
+[ "$act" = --full-restart ] && act=restart
+exec systemctl "$act" "$name" "$@"
